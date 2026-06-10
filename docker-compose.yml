@@ -1,0 +1,22 @@
+services:
+  asr:
+    build: .
+    image: parakeet-asr-rust:latest
+    container_name: parakeet-asr-rust
+    ports:
+      - "8090:8090"
+    environment:
+      ASR_MODEL: parakeet-tdt-0.6b-v3   # or parakeet-tdt-0.6b-v2 (English-only)
+      ASR_DEVICE: cpu
+    volumes:
+      - parakeet-models:/models          # model cache — survives restarts
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:8090/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  parakeet-models:

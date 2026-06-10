@@ -1,0 +1,51 @@
+[package]
+name = "parakeet-asr-rust"
+version = "0.1.0"
+edition = "2021"
+description = "OpenAI-compatible Parakeet ASR server (Rust + transcribe-rs / ONNX Runtime)"
+
+[[bin]]
+name = "parakeet-asr-rust"
+path = "src/main.rs"
+
+[dependencies]
+# HTTP framework
+axum = { version = "0.7", features = ["multipart"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Serialisation
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ASR engine — same crate Voxia/Handy ship in production.
+# `onnx` feature pulls ONNX Runtime (ort 2.0) + the Parakeet engine.
+# ParakeetModel wraps ORT Sessions and must stay on its owner thread
+# (see engine.rs — the actor pattern).
+transcribe-rs = { version = "0.3.8", features = ["onnx"] }
+
+# Model auto-download + extract
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+flate2 = "1"
+tar = "0.4"
+sha2 = "0.10"
+futures-util = "0.3"
+
+# Error handling
+anyhow = "1"
+
+# IDs
+uuid = { version = "1", features = ["v4"] }
+
+# Logging / tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# SSE
+async-stream = "0.3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

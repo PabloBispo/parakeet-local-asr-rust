@@ -1,0 +1,766 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>parakeet-asr // rust</title>
+<style>
+  :root {
+    --bg: #0c0a09;          /* near-black, warm */
+    --panel: #16120f;        /* warm panel */
+    --panel2: #1f1916;       /* elevated */
+    --panel3: #261e19;
+    --border: #2c241f;       /* warm gray border */
+    --border2: #3a2f28;
+    --fg: #ece4dc;
+    --muted: #a08c7d;        /* warm gray */
+    --muted2: #6b5b4f;
+    --rust: #f74c00;         /* primary accent */
+    --rust2: #ce422b;        /* deep ferris */
+    --sand: #dea584;         /* highlight */
+    --ok: #7fb069;
+    --proc: #dea584;
+    --err: #e5544b;
+    --wa: #25d366;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.55 var(--sans);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: rgba(247,76,0,.3); }
+
+  /* scrollbars */
+  *::-webkit-scrollbar { width: 7px; height: 7px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 0; }
+  *::-webkit-scrollbar-thumb:hover { background: var(--muted2); }
+
+  /* ── header ── */
+  header {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(12,10,9,.9); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 22px;
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  .brand .crab { font-size: 19px; line-height: 1; filter: saturate(1.2); }
+  .brand h1 {
+    font: 600 15px/1 var(--mono); margin: 0; letter-spacing: -.01em;
+    color: var(--fg);
+  }
+  .brand h1 .slash { color: var(--muted2); margin: 0 2px; }
+  .brand h1 .rust { color: var(--rust); }
+  .hmeta {
+    font: 500 11px/1 var(--mono); color: var(--muted);
+    display: flex; gap: 8px; align-items: center; flex-shrink: 0;
+  }
+  .hmeta .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted2); }
+  .hmeta .dot.up { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .hmeta .dot.down { background: var(--err); }
+
+  /* stats in header */
+  .stats { display: flex; gap: 20px; flex: 1; justify-content: flex-end; flex-wrap: wrap; }
+  .stat { display: flex; flex-direction: column; align-items: flex-end; }
+  .stat .v { font: 600 15px/1.1 var(--mono); color: var(--fg); font-variant-numeric: tabular-nums; }
+  .stat .l { font: 500 10px/1.4 var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .stat .v.rust { color: var(--rust); }
+
+  main { max-width: 980px; margin: 0 auto; padding: 22px 20px 90px; }
+
+  /* ── upload zone ── */
+  .drop {
+    border: 1.5px dashed var(--border2); border-radius: 4px;
+    padding: 34px 20px; text-align: center; cursor: pointer;
+    background: var(--panel); user-select: none;
+    transition: border-color .18s, background .18s, color .18s;
+    color: var(--muted);
+  }
+  .drop:hover, .drop.drag { border-color: var(--rust); background: rgba(247,76,0,.05); color: var(--fg); }
+  .drop .ico { font-size: 26px; line-height: 1; margin-bottom: 8px; }
+  .drop .big { font: 600 15px/1.3 var(--mono); color: var(--fg); }
+  .drop.drag .big::after { content: " ↓"; color: var(--rust); }
+  .drop .sub { font-size: 12.5px; margin-top: 4px; color: var(--muted); }
+  .drop .fmts { margin-top: 9px; font: 500 10.5px/1 var(--mono); color: var(--muted2); letter-spacing: .04em; }
+
+  /* ── controls row ── */
+  .controls { margin-top: 20px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .search { position: relative; flex: 1; min-width: 200px; }
+  .search .mag { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--muted2); pointer-events: none; font-size: 13px; }
+  .search input {
+    width: 100%; background: var(--panel); border: 1px solid var(--border2); border-radius: 3px;
+    color: var(--fg); font: 14px var(--sans); padding: 9px 12px 9px 32px;
+    outline: none; transition: border-color .15s;
+  }
+  .search input::placeholder { color: var(--muted2); }
+  .search input:focus { border-color: var(--rust); }
+  .count { font: 500 12px var(--mono); color: var(--muted); white-space: nowrap; }
+  .toggle {
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+    font: 500 12px var(--mono); color: var(--muted); user-select: none;
+  }
+  .toggle input { display: none; }
+  .toggle .sw { width: 30px; height: 16px; border-radius: 9px; background: var(--panel2); border: 1px solid var(--border2); position: relative; transition: background .15s; }
+  .toggle .sw::after { content: ""; position: absolute; left: 2px; top: 1px; width: 12px; height: 12px; border-radius: 50%; background: var(--muted); transition: transform .15s, background .15s; }
+  .toggle input:checked + .sw { background: rgba(247,76,0,.25); border-color: var(--rust); }
+  .toggle input:checked + .sw::after { transform: translateX(14px); background: var(--rust); }
+
+  /* ── list ── */
+  .list { margin-top: 18px; display: flex; flex-direction: column; gap: 14px; }
+
+  .empty { text-align: center; padding: 64px 20px; color: var(--muted); }
+  .empty .ico { font-size: 34px; margin-bottom: 10px; }
+  .empty p { margin: 4px 0; font: 500 14px var(--mono); }
+  .empty small { color: var(--muted2); font-size: 12px; }
+
+  /* ── card ── */
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-left: 3px solid var(--border2); border-radius: 4px;
+    overflow: hidden; transition: border-color .18s;
+  }
+  .card:hover { border-color: var(--border2); }
+  .card.st-pending, .card.st-transcribing { border-left-color: var(--proc); }
+  .card.st-done { border-left-color: var(--ok); }
+  .card.st-error { border-left-color: var(--err); }
+  .card.compact { border-radius: 3px; }
+
+  .chead { padding: 13px 14px 9px; display: flex; align-items: flex-start; gap: 10px; }
+  .fname { flex: 1; min-width: 0; font: 600 13.5px/1.35 var(--mono); color: var(--fg); word-break: break-word; }
+  .badge {
+    flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px;
+    font: 700 10.5px/1 var(--mono); padding: 4px 8px; border-radius: 3px;
+    text-transform: uppercase; letter-spacing: .05em;
+  }
+  .badge.pending, .badge.transcribing { background: rgba(222,165,132,.13); color: var(--proc); }
+  .badge.done { background: rgba(127,176,105,.15); color: var(--ok); }
+  .badge.error { background: rgba(229,84,75,.15); color: var(--err); }
+  .badge .sp { width: 9px; height: 9px; border: 2px solid rgba(222,165,132,.35); border-top-color: var(--proc); border-radius: 50%; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .cmeta { padding: 0 14px 9px; display: flex; gap: 13px; flex-wrap: wrap; font: 500 11.5px var(--mono); color: var(--muted); }
+  .cmeta .lang { background: rgba(247,76,0,.12); color: var(--rust); padding: 1px 6px; border-radius: 3px; font-weight: 600; }
+
+  .caudio { padding: 0 14px 8px; }
+  audio { width: 100%; height: 34px; }
+
+  .cbody { padding: 0 14px 13px; }
+  .text-box {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 3px;
+    padding: 11px 13px; white-space: pre-wrap; line-height: 1.6;
+    max-height: 240px; overflow-y: auto; font: 13.5px/1.6 var(--sans);
+    color: var(--fg); word-break: break-word;
+  }
+  .text-box mark { background: rgba(247,76,0,.35); color: var(--fg); border-radius: 2px; }
+  .empty-tr { color: var(--muted2); font-style: italic; font-size: 13px; padding: 6px 0; }
+  .err-tr { color: var(--err); font-size: 13px; padding: 4px 0; line-height: 1.5; }
+  .proc-tr { color: var(--muted); font-style: italic; font-size: 13px; padding: 6px 0; display: flex; align-items: center; gap: 8px; }
+
+  /* segments */
+  .segs {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 3px;
+    max-height: 260px; overflow-y: auto; scroll-behavior: smooth; padding: 3px 0;
+  }
+  .seg {
+    display: flex; align-items: baseline; gap: 10px; padding: 6px 12px;
+    cursor: pointer; border-left: 2px solid transparent; transition: background .12s;
+    font: 13.5px/1.5 var(--sans);
+  }
+  .seg:hover { background: rgba(247,76,0,.06); }
+  .seg.active { background: rgba(247,76,0,.13); border-left-color: var(--rust); }
+  .seg .tc { font: 600 11px var(--mono); color: var(--rust); min-width: 44px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .seg .tx { color: var(--fg); flex: 1; min-width: 0; }
+  .seg .tx mark { background: rgba(247,76,0,.35); color: var(--fg); border-radius: 2px; }
+
+  .segtoggle {
+    display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none;
+    font: 600 11px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .05em;
+    margin-bottom: 8px; background: none; border: none; padding: 2px 0;
+  }
+  .segtoggle:hover { color: var(--fg); }
+  .segtoggle .chev { transition: transform .18s; display: inline-block; }
+  .segtoggle.open .chev { transform: rotate(90deg); }
+
+  /* actions */
+  .actions { padding: 0 14px 13px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .btn {
+    background: transparent; color: var(--muted); border: 1px solid var(--border2);
+    border-radius: 3px; padding: 5px 10px; font: 500 12px var(--mono); cursor: pointer;
+    display: inline-flex; align-items: center; gap: 5px; transition: all .14s;
+  }
+  .btn:hover { color: var(--fg); border-color: var(--muted); background: var(--panel2); }
+  .btn.danger { color: var(--err); border-color: rgba(229,84,75,.3); }
+  .btn.danger:hover { background: rgba(229,84,75,.1); border-color: var(--err); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+
+  /* whatsapp group */
+  .wagroup { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--wa); border-radius: 4px; overflow: hidden; }
+  .wahead { padding: 12px 14px; display: flex; align-items: center; gap: 11px; flex-wrap: wrap; }
+  .wahead .icon { color: var(--wa); font-size: 15px; flex-shrink: 0; }
+  .wahead .wtitle { font: 600 13.5px var(--mono); color: var(--fg); }
+  .wahead .pill { background: rgba(37,211,102,.13); color: var(--wa); font: 600 11px var(--mono); padding: 1px 7px; border-radius: 3px; }
+  .wahead .date { color: var(--muted); font: 500 12px var(--mono); }
+  .wahead .range { color: var(--muted2); font: 500 11px var(--mono); }
+  .wahead .spacer { flex: 1; }
+  .wamembers { padding: 0 11px 11px; display: flex; flex-direction: column; gap: 11px; }
+  .wachev { transition: transform .18s; display: inline-block; }
+  .wachev.collapsed { transform: rotate(-90deg); }
+
+  /* toasts */
+  #toasts { position: fixed; bottom: 22px; right: 22px; display: flex; flex-direction: column; gap: 9px; z-index: 9999; pointer-events: none; }
+  .toast {
+    background: var(--panel3); border: 1px solid var(--border2); border-left: 3px solid var(--rust);
+    border-radius: 3px; padding: 10px 14px; font: 500 13px var(--sans); color: var(--fg);
+    max-width: 320px; box-shadow: 0 8px 24px rgba(0,0,0,.5);
+    animation: toastin .2s ease both;
+  }
+  .toast.ok { border-left-color: var(--ok); }
+  .toast.err { border-left-color: var(--err); }
+  @keyframes toastin { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: none; } }
+
+  .live { display: inline-flex; align-items: center; gap: 5px; color: var(--sand); font: 500 11px var(--mono); }
+  .live .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--sand); animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="crab">🦀</span>
+    <h1>parakeet-asr<span class="slash">//</span><span class="rust">rust</span></h1>
+  </div>
+  <div class="hmeta" id="hmeta" title="server health">
+    <span class="dot" id="hdot"></span><span id="hinfo">connecting…</span>
+  </div>
+  <div class="stats" id="stats"></div>
+</header>
+
+<main>
+  <div id="drop" class="drop" role="button" tabindex="0" aria-label="Upload audio">
+    <div class="ico">🎙</div>
+    <div class="big">Drop audio here or click to choose</div>
+    <div class="sub">Multiple files at once — auto-transcribed sequentially.</div>
+    <div class="fmts">WAV · MP3 · M4A · OGG / OPUS · FLAC · WEBM</div>
+    <input id="file" type="file" accept="audio/*,.wav,.mp3,.m4a,.ogg,.opus,.flac,.webm" multiple hidden />
+  </div>
+
+  <div class="controls">
+    <div class="search">
+      <span class="mag">🔍</span>
+      <input id="q" type="search" placeholder="Search by filename or transcript…" autocomplete="off" />
+    </div>
+    <span class="count" id="count"></span>
+    <label class="toggle" title="Group WhatsApp voice notes">
+      <input id="groupToggle" type="checkbox" checked />
+      <span class="sw"></span>group whatsapp
+    </label>
+  </div>
+
+  <div id="list" class="list"></div>
+</main>
+
+<div id="toasts"></div>
+
+<script>
+"use strict";
+const $ = (s, el=document) => el.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+const MODEL = "parakeet-tdt-0.6b-v3";
+
+/* ============================================================
+   FORMAT HELPERS  (mirror format.ts)
+   ============================================================ */
+function fmtBytes(b){ if(b==null) return "—"; return b>1e6 ? (b/1e6).toFixed(1)+" MB" : Math.round(b/1e3)+" KB"; }
+function fmtTimecode(s){ const m=Math.floor(s/60), sec=Math.floor(s%60); return String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0"); }
+function fmtDurSec(s){ if(s==null||isNaN(s)) return "—"; const m=Math.floor(s/60), sec=Math.round(s%60); return m>0 ? m+"m "+sec+"s" : s.toFixed(1)+"s"; }
+function fmtTotalDur(sec){ if(sec==null||isNaN(sec)) return "—"; const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=Math.round(sec%60); if(h>0) return h+"h "+m+"m"; if(m>0) return m+"m "+s+"s"; return s+"s"; }
+function fmtDate(ms){ if(!ms) return "—"; try{ return new Date(ms).toLocaleString(undefined,{dateStyle:"short",timeStyle:"short"}); }catch{ return "—"; } }
+function fmtHHMM(ms){ if(!ms) return "—"; try{ return new Date(ms).toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}); }catch{ return "—"; } }
+
+/* ============================================================
+   WHATSAPP FILENAME PARSER  (mirror whatsapp.py _WA_RE)
+   ============================================================ */
+const WA_RE = /whatsapp[\s_-]+(?:ptt|audio)\b.*?(\d{4})-(\d{2})-(\d{2})[\s_-]+at[\s_-]+(\d{1,2})\.(\d{2})\.(\d{2})/i;
+function parseWhatsapp(filename){
+  const m = WA_RE.exec(filename || "");
+  if(!m) return null;
+  const [, y, mo, d, h, mi, s] = m.map(Number);
+  // validate calendar date (UTC, like the python side)
+  const dt = new Date(Date.UTC(y, mo-1, d, h, mi, s));
+  if(dt.getUTCFullYear()!==y || dt.getUTCMonth()!==mo-1 || dt.getUTCDate()!==d ||
+     dt.getUTCHours()!==h || dt.getUTCMinutes()!==mi || dt.getUTCSeconds()!==s) return null;
+  return dt.getTime();
+}
+
+/* ============================================================
+   INDEXEDDB STORE
+   ============================================================ */
+const DB_NAME = "parakeet-asr", STORE = "recordings", DB_VER = 1;
+let _db = null;
+function openDB(){
+  if(_db) return Promise.resolve(_db);
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if(!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: "id" });
+    };
+    req.onsuccess = () => { _db = req.result; res(_db); };
+    req.onerror = () => rej(req.error);
+  });
+}
+function tx(mode){ return openDB().then(db => db.transaction(STORE, mode).objectStore(STORE)); }
+function dbGetAll(){ return tx("readonly").then(s => new Promise((res,rej)=>{ const r=s.getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>rej(r.error); })); }
+function dbPut(rec){ return tx("readwrite").then(s => new Promise((res,rej)=>{ const r=s.put(rec); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); })); }
+function dbDel(id){ return tx("readwrite").then(s => new Promise((res,rej)=>{ const r=s.delete(id); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); })); }
+
+/* ============================================================
+   STATE
+   ============================================================ */
+let recordings = [];          // in-memory mirror of IndexedDB
+const urlCache = new Map();   // id -> objectURL
+const collapsedSegs = new Set();
+const collapsedGroups = new Set();
+let query = "";
+let groupWA = true;
+let transcribing = false;     // worker running flag
+
+function objURL(rec){
+  if(urlCache.has(rec.id)) return urlCache.get(rec.id);
+  const u = URL.createObjectURL(rec.blob);
+  urlCache.set(rec.id, u);
+  return u;
+}
+
+/* ============================================================
+   TOASTS
+   ============================================================ */
+function toast(msg, type="ok"){
+  const el = document.createElement("div");
+  el.className = "toast " + type;
+  el.textContent = msg;
+  $("#toasts").appendChild(el);
+  setTimeout(() => { el.style.transition="opacity .25s"; el.style.opacity="0"; setTimeout(()=>el.remove(),250); }, 3200);
+}
+
+/* ============================================================
+   UPLOAD
+   ============================================================ */
+const drop = $("#drop"), fileInput = $("#file");
+drop.addEventListener("click", () => fileInput.click());
+drop.addEventListener("keydown", e => { if(e.key==="Enter"||e.key===" "){ e.preventDefault(); fileInput.click(); } });
+["dragover","dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("drag"); }));
+["dragleave","dragend"].forEach(ev => drop.addEventListener(ev, e => { if(!drop.contains(e.relatedTarget)) drop.classList.remove("drag"); }));
+drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("drag"); if(e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
+fileInput.addEventListener("change", () => { if(fileInput.files.length){ addFiles(fileInput.files); fileInput.value=""; } });
+
+async function addFiles(fileList){
+  const files = Array.from(fileList);
+  let n = 0;
+  for(const f of files){
+    const id = (crypto.randomUUID ? crypto.randomUUID() : Date.now()+"-"+Math.random().toString(36).slice(2));
+    const recordedAt = parseWhatsapp(f.name);
+    const rec = {
+      id, name: f.name, size: f.size, blob: f,
+      addedAt: Date.now(),
+      recordedAt: recordedAt,                 // ms epoch or null
+      source: recordedAt!=null ? "whatsapp" : null,
+      status: "pending",
+      text: null, segments: null, duration: null, error: null, processingMs: null,
+    };
+    try { await dbPut(rec); recordings.push(rec); n++; }
+    catch(e){ toast("Failed to store "+f.name+": "+e.message, "err"); }
+  }
+  if(n) toast(n+" file"+(n!==1?"s":"")+" added", "ok");
+  render();
+  runQueue();
+}
+
+/* ============================================================
+   TRANSCRIPTION QUEUE (sequential)
+   ============================================================ */
+async function runQueue(){
+  if(transcribing) return;
+  transcribing = true;
+  try {
+    while(true){
+      const rec = recordings.find(r => r.status === "pending");
+      if(!rec) break;
+      await transcribeOne(rec);
+    }
+  } finally {
+    transcribing = false;
+  }
+}
+
+async function transcribeOne(rec){
+  rec.status = "transcribing"; rec.error = null;
+  await dbPut(rec).catch(()=>{});
+  render();
+  const t0 = performance.now();
+  try {
+    const fd = new FormData();
+    fd.append("file", rec.blob, rec.name);
+    fd.append("model", MODEL);
+    fd.append("response_format", "verbose_json");
+    const res = await fetch("/v1/audio/transcriptions", { method: "POST", body: fd });
+    if(!res.ok){
+      let msg = "HTTP " + res.status;
+      try { const j = await res.json(); msg = (j.error && j.error.message) || j.detail || msg; }
+      catch { try { msg = (await res.text()) || msg; } catch {} }
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    rec.text = (data.text || "").trim();
+    rec.segments = Array.isArray(data.segments) ? data.segments : [];
+    rec.duration = (typeof data.duration === "number") ? data.duration : null;
+    rec.processingMs = Math.round(performance.now() - t0);
+    rec.status = "done";
+  } catch(e){
+    rec.status = "error";
+    rec.error = e.message || String(e);
+    toast(rec.name + ": " + rec.error, "err");
+  }
+  await dbPut(rec).catch(()=>{});
+  render();
+  refreshStats();
+}
+
+function retranscribe(id){
+  const rec = recordings.find(r => r.id === id);
+  if(!rec) return;
+  rec.status = "pending"; rec.text=null; rec.segments=null; rec.error=null; rec.processingMs=null;
+  dbPut(rec).catch(()=>{});
+  render();
+  runQueue();
+}
+
+/* ============================================================
+   ACTIONS: copy / download / delete
+   ============================================================ */
+function recText(rec){
+  if(rec.text && rec.text.trim()) return rec.text.trim();
+  if(rec.segments && rec.segments.length) return rec.segments.map(s=>s.text).join(" ").trim();
+  return "";
+}
+async function copyRec(id){
+  const rec = recordings.find(r=>r.id===id); if(!rec) return;
+  const t = recText(rec);
+  if(!t){ toast("No text to copy.", "err"); return; }
+  try { await navigator.clipboard.writeText(t); toast("Transcript copied!", "ok"); }
+  catch { toast("Copy failed (no permission?)", "err"); }
+}
+function copyGroup(ids){
+  const texts = ids.map(id => recText(recordings.find(r=>r.id===id)||{})).filter(Boolean);
+  if(!texts.length){ toast("No text to copy.", "err"); return; }
+  navigator.clipboard.writeText(texts.join("\n\n")).then(()=>toast("All copied!","ok")).catch(()=>toast("Copy failed.","err"));
+}
+function pad3(n){ return String(n).padStart(3,"0"); }
+function srtTime(s){ const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=Math.floor(s%60), ms=Math.round((s-Math.floor(s))*1000); return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0")+","+pad3(ms); }
+function buildSRT(rec){
+  const segs = rec.segments || [];
+  if(!segs.length){ const t=recText(rec); return t ? "1\n00:00:00,000 --> 00:00:05,000\n"+t+"\n" : ""; }
+  return segs.map((s,i)=> (i+1)+"\n"+srtTime(s.start)+" --> "+srtTime(s.end)+"\n"+(s.text||"").trim()+"\n").join("\n");
+}
+function baseName(name){ return name.replace(/\.[^.]+$/, ""); }
+function downloadBlob(text, filename, mime){
+  const b = new Blob([text], { type: mime });
+  const u = URL.createObjectURL(b);
+  const a = document.createElement("a"); a.href=u; a.download=filename; a.click();
+  setTimeout(()=>URL.revokeObjectURL(u), 1000);
+}
+function dlTxt(id){ const r=recordings.find(x=>x.id===id); const t=recText(r); if(!t){toast("No text.","err");return;} downloadBlob(t, baseName(r.name)+".txt", "text/plain"); }
+function dlSrt(id){ const r=recordings.find(x=>x.id===id); const s=buildSRT(r); if(!s){toast("No segments.","err");return;} downloadBlob(s, baseName(r.name)+".srt", "text/plain"); }
+async function delRec(id){
+  if(!confirm("Delete this recording permanently?")) return;
+  await dbDel(id).catch(()=>{});
+  recordings = recordings.filter(r=>r.id!==id);
+  if(urlCache.has(id)){ URL.revokeObjectURL(urlCache.get(id)); urlCache.delete(id); }
+  toast("Recording deleted.", "ok");
+  render(); refreshStats();
+}
+
+/* ============================================================
+   SEEK + segment highlight tracking
+   ============================================================ */
+function seekRec(id, t){
+  const audio = $('audio[data-aid="'+CSS.escape(id)+'"]');
+  if(!audio) return;
+  audio.currentTime = t;
+  audio.play().catch(()=>{});
+}
+function attachAudioTracking(audio, rec){
+  const segs = rec.segments;
+  if(!segs || !segs.length) return;
+  const container = audio.closest(".card, .compact") || document;
+  audio.addEventListener("timeupdate", () => {
+    const t = audio.currentTime;
+    let idx = -1;
+    for(let i=0;i<segs.length;i++){ if(t>=segs[i].start && t<segs[i].end){ idx=i; break; } }
+    if(idx===-1 && t >= (segs[segs.length-1].start||0)) idx = segs.length-1;
+    const rows = container.querySelectorAll('.seg[data-rid="'+CSS.escape(rec.id)+'"]');
+    rows.forEach((el,i)=>{ const a = i===idx; el.classList.toggle("active", a); if(a){ const top=el.offsetTop-el.parentElement.offsetTop; const ph=el.parentElement; if(top<ph.scrollTop || top>ph.scrollTop+ph.clientHeight) ph.scrollTop = top - ph.clientHeight/2; } });
+  });
+}
+
+/* ============================================================
+   SEARCH HIGHLIGHT
+   ============================================================ */
+function highlight(text, q){
+  const s = esc(text);
+  if(!q) return s;
+  try {
+    const re = new RegExp("("+q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+")","gi");
+    return s.replace(re, "<mark>$1</mark>");
+  } catch { return s; }
+}
+function matches(rec, q){
+  if(!q) return true;
+  const hay = (rec.name + " " + (rec.text||"") + " " + ((rec.segments||[]).map(s=>s.text).join(" "))).toLowerCase();
+  return hay.includes(q.toLowerCase());
+}
+
+/* ============================================================
+   GROUPING  (mirror grouping.ts: whatsapp + >=2 members)
+   ============================================================ */
+function buildRenderItems(recs){
+  const groupable = groupWA;
+  const batchMap = new Map();   // dayKey -> [recs]
+  if(groupable){
+    for(const r of recs){
+      if(r.source === "whatsapp" && r.recordedAt != null){
+        const d = new Date(r.recordedAt);
+        const key = d.getUTCFullYear()+"-"+(d.getUTCMonth()+1)+"-"+d.getUTCDate();
+        const arr = batchMap.get(key) || [];
+        arr.push(r); batchMap.set(key, arr);
+      }
+    }
+  }
+  const groupKeys = new Set();
+  for(const [k,m] of batchMap){ if(m.length>=2) groupKeys.add(k); }
+
+  const groups = [];
+  for(const [k,members] of batchMap){
+    if(!groupKeys.has(k)) continue;
+    const sorted = [...members].sort((a,b)=>{ const ka=a.recordedAt??a.addedAt, kb=b.recordedAt??b.addedAt; return ka-kb; });
+    const sortKey = sorted.reduce((mx,r)=> Math.max(mx, r.addedAt), sorted[0]?.addedAt||0);
+    groups.push({ type:"group", batchId:k, members:sorted, sortKey });
+  }
+  const groupedIds = new Set(groups.flatMap(g=>g.members.map(m=>m.id)));
+  const singles = recs.filter(r=>!groupedIds.has(r.id)).map(r=>({ type:"single", recording:r, sortKey:r.addedAt }));
+
+  const all = [...groups, ...singles];
+  all.sort((a,b)=> b.sortKey - a.sortKey);
+  return all;
+}
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+function statusLabel(s){ return s==="done"?"done":s==="error"?"error":s==="transcribing"?"transcribing":"queued"; }
+function badge(status){
+  if(status==="done") return '<span class="badge done">✓ done</span>';
+  if(status==="error") return '<span class="badge error">✕ error</span>';
+  if(status==="transcribing") return '<span class="badge transcribing"><span class="sp"></span>transcribing</span>';
+  return '<span class="badge pending">⋯ queued</span>';
+}
+
+function cardHTML(rec, compact){
+  const segs = rec.segments || [];
+  const hasSegs = segs.length>0;
+  const hasText = (rec.text||"").trim().length>0;
+  const segsOpen = !collapsedSegs.has(rec.id);
+  let body = "";
+  if(rec.status==="done"){
+    if(hasSegs){
+      body += '<button class="segtoggle '+(segsOpen?"open":"")+'" data-segtoggle="'+esc(rec.id)+'"><span class="chev">▶</span> '+segs.length+' segments</button>';
+      if(segsOpen){
+        body += '<div class="segs">' + segs.map(s =>
+          '<div class="seg" data-rid="'+esc(rec.id)+'" data-seek="'+s.start+'">' +
+          '<span class="tc">'+fmtTimecode(s.start)+'</span>' +
+          '<span class="tx">'+highlight(s.text||"", query)+'</span></div>'
+        ).join("") + '</div>';
+      }
+    } else if(hasText){
+      body += '<div class="text-box">'+highlight(rec.text, query)+'</div>';
+    } else {
+      body += '<div class="empty-tr">(empty transcript)</div>';
+    }
+  } else if(rec.status==="error"){
+    body += '<div class="err-tr">⚠ '+esc(rec.error||"Unknown error")+'</div>';
+  } else if(rec.status==="transcribing"){
+    body += '<div class="proc-tr"><span class="live"><span class="pulse"></span>transcribing</span> on server…</div>';
+  } else {
+    body += '<div class="proc-tr">queued…</div>';
+  }
+
+  let acts = "";
+  if(rec.status==="done" && (hasText||hasSegs)){
+    acts += '<button class="btn" data-copy="'+esc(rec.id)+'">⧉ copy</button>';
+    acts += '<button class="btn" data-srt="'+esc(rec.id)+'">↓ srt</button>';
+    acts += '<button class="btn" data-txt="'+esc(rec.id)+'">↓ txt</button>';
+  }
+  if(rec.status==="done"||rec.status==="error"){
+    acts += '<button class="btn" data-retr="'+esc(rec.id)+'">↻ retry</button>';
+  }
+  acts += '<button class="btn danger" data-del="'+esc(rec.id)+'">🗑 delete</button>';
+
+  const dur = rec.duration!=null ? fmtDurSec(rec.duration) : null;
+  return '<div class="card st-'+rec.status+(compact?" compact":"")+'">' +
+    '<div class="chead"><span class="fname" title="'+esc(rec.name)+'">'+highlight(rec.name, query)+'</span>'+badge(rec.status)+'</div>' +
+    '<div class="cmeta">' +
+      '<span>'+fmtBytes(rec.size)+'</span>' +
+      (dur?'<span>⏱ '+dur+'</span>':'') +
+      (rec.processingMs!=null?'<span>⚡ '+(rec.processingMs>=1000?(rec.processingMs/1000).toFixed(1)+"s":rec.processingMs+"ms")+'</span>':'') +
+      '<span>'+fmtDate(rec.addedAt)+'</span>' +
+      (rec.source==="whatsapp"?'<span class="lang">whatsapp</span>':'') +
+    '</div>' +
+    '<div class="caudio"><audio controls preload="none" data-aid="'+esc(rec.id)+'" data-needsrc="1"></audio></div>' +
+    '<div class="cbody">'+body+'</div>' +
+    '<div class="actions">'+acts+'</div>' +
+  '</div>';
+}
+
+function groupHTML(g){
+  const collapsed = collapsedGroups.has(g.batchId);
+  const first = g.members[0], last = g.members[g.members.length-1];
+  const dateLabel = fmtDate(first.recordedAt || first.addedAt);
+  const ft = fmtHHMM(first.recordedAt||first.addedAt), lt = fmtHHMM(last.recordedAt||last.addedAt);
+  const range = (first===last) ? ft : ft+"–"+lt;
+  const ids = g.members.map(m=>m.id);
+  return '<div class="wagroup">' +
+    '<div class="wahead">' +
+      '<span class="icon">●</span>' +
+      '<span class="wtitle">WhatsApp</span>' +
+      '<span class="pill">'+g.members.length+' notes</span>' +
+      '<span class="date">'+dateLabel+'</span>' +
+      '<span class="range">'+range+'</span>' +
+      '<span class="spacer"></span>' +
+      '<button class="btn" data-copygroup="'+esc(ids.join(","))+'">⧉ copy all</button>' +
+      '<button class="btn" data-grouptoggle="'+esc(g.batchId)+'"><span class="wachev '+(collapsed?"collapsed":"")+'">▼</span></button>' +
+    '</div>' +
+    (collapsed ? '' : '<div class="wamembers">' + g.members.map(m=>cardHTML(m, true)).join("") + '</div>') +
+  '</div>';
+}
+
+function render(){
+  const list = $("#list");
+  const filtered = recordings.filter(r => matches(r, query));
+  const items = buildRenderItems(filtered);
+
+  // count
+  $("#count").textContent = filtered.length ? filtered.length + " recording" + (filtered.length!==1?"s":"") : "";
+
+  if(!items.length){
+    list.innerHTML = '<div class="empty"><div class="ico">🎧</div>' +
+      (query ? '<p>No results for "'+esc(query)+'"</p><small>Try another search.</small>'
+             : '<p>No audio yet</p><small>Drop files above to begin.</small>') + '</div>';
+    return;
+  }
+
+  list.innerHTML = items.map(it => it.type==="group" ? groupHTML(it) : cardHTML(it.recording, false)).join("");
+
+  // hydrate audio elements (set src lazily from blob, attach tracking)
+  list.querySelectorAll('audio[data-needsrc="1"]').forEach(audio => {
+    const id = audio.getAttribute("data-aid");
+    const rec = recordings.find(r=>r.id===id);
+    if(!rec) return;
+    audio.removeAttribute("data-needsrc");
+    audio.src = objURL(rec);
+    attachAudioTracking(audio, rec);
+  });
+}
+
+/* ── delegated events on the list ── */
+$("#list").addEventListener("click", e => {
+  const t = e.target.closest("[data-copy],[data-srt],[data-txt],[data-del],[data-retr],[data-seek],[data-segtoggle],[data-grouptoggle],[data-copygroup]");
+  if(!t) return;
+  if(t.dataset.copy!=null) return copyRec(t.dataset.copy);
+  if(t.dataset.srt!=null) return dlSrt(t.dataset.srt);
+  if(t.dataset.txt!=null) return dlTxt(t.dataset.txt);
+  if(t.dataset.del!=null) return delRec(t.dataset.del);
+  if(t.dataset.retr!=null) return retranscribe(t.dataset.retr);
+  if(t.dataset.copygroup!=null) return copyGroup(t.dataset.copygroup.split(","));
+  if(t.dataset.segtoggle!=null){ const id=t.dataset.segtoggle; if(collapsedSegs.has(id)) collapsedSegs.delete(id); else collapsedSegs.add(id); return render(); }
+  if(t.dataset.grouptoggle!=null){ const id=t.dataset.grouptoggle; if(collapsedGroups.has(id)) collapsedGroups.delete(id); else collapsedGroups.add(id); return render(); }
+  if(t.dataset.seek!=null){ const rid=t.getAttribute("data-rid"); seekRec(rid, parseFloat(t.dataset.seek)); }
+});
+
+/* ── search (debounced) ── */
+let qTimer = null;
+$("#q").addEventListener("input", e => {
+  clearTimeout(qTimer);
+  const v = e.target.value;
+  qTimer = setTimeout(() => { query = v.trim(); render(); }, 220);
+});
+
+/* ── group toggle ── */
+$("#groupToggle").addEventListener("change", e => { groupWA = e.target.checked; render(); });
+
+/* ============================================================
+   HEALTH + METRICS
+   ============================================================ */
+async function refreshHealth(){
+  try {
+    const r = await fetch("/health");
+    if(!r.ok) throw new Error();
+    const j = await r.json();
+    $("#hdot").className = "dot up";
+    $("#hinfo").textContent = (j.model||MODEL) + " · " + (j.device||"?");
+  } catch {
+    $("#hdot").className = "dot down";
+    $("#hinfo").textContent = "server down";
+  }
+}
+async function refreshStats(){
+  const total = recordings.length;
+  const done = recordings.filter(r=>r.status==="done").length;
+  const pending = recordings.filter(r=>r.status==="pending"||r.status==="transcribing").length;
+  const totalDur = recordings.reduce((a,r)=> a + (r.duration||0), 0);
+  let metrics = null;
+  try { const r = await fetch("/metrics"); if(r.ok) metrics = await r.json(); } catch {}
+  const items = [
+    ["v", total, "recordings"],
+    ["v rust", done, "done"],
+    ["v", pending, "pending"],
+    ["v", fmtTotalDur(totalDur), "audio"],
+  ];
+  if(metrics){
+    if(metrics.queue_depth!=null) items.push(["v", metrics.queue_depth, "queue"]);
+    if(metrics.avg_latency_ms!=null) items.push(["v", Math.round(metrics.avg_latency_ms)+"ms", "avg lat"]);
+  }
+  $("#stats").innerHTML = items.map(([cls,v,l]) =>
+    '<div class="stat"><span class="'+cls+'">'+esc(v)+'</span><span class="l">'+l+'</span></div>'
+  ).join("");
+}
+
+/* ============================================================
+   INIT
+   ============================================================ */
+async function init(){
+  try {
+    recordings = await dbGetAll();
+    // recover stuck items (were transcribing when page closed) -> requeue
+    let dirty = false;
+    for(const r of recordings){ if(r.status==="transcribing"){ r.status="pending"; dirty=true; await dbPut(r).catch(()=>{}); } }
+  } catch(e){
+    toast("Could not open local library: "+e.message, "err");
+    recordings = [];
+  }
+  render();
+  refreshHealth();
+  refreshStats();
+  runQueue();
+  setInterval(refreshHealth, 15000);
+  setInterval(refreshStats, 8000);
+}
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,86 @@
+mod audio;
+mod engine;
+mod error;
+mod jobs;
+mod metrics;
+mod model;
+mod pipeline;
+mod routes;
+mod state;
+mod transcript;
+
+use anyhow::Result;
+use axum::{
+    extract::DefaultBodyLimit,
+    routing::{get, post},
+    Router,
+};
+use state::AppState;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
+
+// Allow large audio uploads (default axum limit is 2 MB).
+const MAX_UPLOAD_BYTES: usize = 2 * 1024 * 1024 * 1024; // 2 GB
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "parakeet_asr_rust=info,tower_http=warn".into()),
+        )
+        .init();
+
+    let model_id = std::env::var("ASR_MODEL").unwrap_or_else(|_| "parakeet-tdt-0.6b-v3".into());
+    let models_dir =
+        PathBuf::from(std::env::var("MODELS_DIR").unwrap_or_else(|_| "models".into()));
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8090);
+    let device = std::env::var("ASR_DEVICE").unwrap_or_else(|_| "cpu".into());
+
+    tracing::info!("ensuring model '{model_id}' under {}", models_dir.display());
+    let model_dir = model::ensure_model(&models_dir, &model_id).await?;
+
+    tracing::info!("loading engine (first load can take a few seconds)...");
+    let engine = engine::EngineHandle::spawn(model_dir)?;
+    let jobs = jobs::JobQueue::start(engine.clone());
+
+    let state = AppState {
+        engine,
+        jobs,
+        metrics: Arc::new(metrics::Metrics::default()),
+        model_id,
+        device,
+    };
+
+    let app = Router::new()
+        .route("/", get(routes::index))
+        .route("/ui", get(routes::ui))
+        .route("/health", get(routes::health))
+        .route("/metrics", get(routes::metrics))
+        .route("/v1/audio/transcriptions", post(routes::transcriptions))
+        .route(
+            "/v1/audio/transcriptions/stream",
+            post(routes::transcriptions_stream),
+        )
+        .route(
+            "/v1/audio/transcriptions/async",
+            post(routes::transcriptions_async),
+        )
+        .route("/v1/audio/jobs/:job_id", get(routes::job_status))
+        .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
+        .layer(CorsLayer::permissive())
+        .layer(TraceLayer::new_for_http())
+        .with_state(state);
+
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    tracing::info!("parakeet-asr-rust listening on http://{addr}");
+    axum::serve(listener, app).await?;
+    Ok(())
+}
