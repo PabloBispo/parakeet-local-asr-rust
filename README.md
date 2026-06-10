@@ -26,6 +26,11 @@ Audit it first if you like: `curl -fsSL .../install.sh | less`. Then run
 `ffmpeg` and, if it's missing, tells you the exact install command (and the web UI
 shows a banner). Windows: grab the `.zip` from the [Releases](https://github.com/PabloBispo/parakeet-local-asr-rust/releases) page.
 
+> **No prebuilt binary for your platform** (e.g. an older Intel Mac)? Build it
+> yourself in one command — `cargo build --release` (needs the Rust toolchain) —
+> or just use Docker below. The binary is self-contained (ONNX Runtime is statically
+> linked); you only need `ffmpeg` at runtime.
+
 ---
 
 ## Run with Docker

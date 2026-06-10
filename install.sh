@@ -92,7 +92,17 @@ case "${OS}" in
     Darwin)
         case "${ARCH}" in
             arm64)  ASSET_SUFFIX="aarch64-apple-darwin.tar.gz" ;;
-            x86_64) ASSET_SUFFIX="x86_64-apple-darwin.tar.gz" ;;
+            x86_64)
+                printf '\n'
+                warn "No prebuilt binary for Intel (x86_64) Macs."
+                printf '\n'
+                printf '  Apple Silicon (arm64) Macs are covered. On an Intel Mac, build from source:\n'
+                printf '    git clone https://github.com/PabloBispo/parakeet-local-asr-rust\n'
+                printf '    cd parakeet-local-asr-rust && cargo build --release\n'
+                printf '  (needs the Rust toolchain — https://rustup.rs), or use Docker (see the README).\n'
+                printf '\n'
+                exit 0
+                ;;
             *)      error "Unsupported macOS architecture: ${ARCH}. See ${RELEASES_URL} to download manually." ;;
         esac
         CHECKSUM_CMD="shasum -a 256"

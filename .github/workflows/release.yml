@@ -6,7 +6,6 @@
 #
 # Artifacts produced per release:
 #   parakeet-local-asr-rust-aarch64-apple-darwin.tar.gz
-#   parakeet-local-asr-rust-x86_64-apple-darwin.tar.gz
 #   parakeet-local-asr-rust-x86_64-unknown-linux-gnu.tar.gz
 #   parakeet-local-asr-rust-aarch64-unknown-linux-gnu.tar.gz
 #   parakeet-local-asr-rust-x86_64-pc-windows-msvc.zip
@@ -35,9 +34,11 @@ jobs:
             target: aarch64-apple-darwin
             archive: parakeet-local-asr-rust-aarch64-apple-darwin.tar.gz
 
-          - runner: macos-13
-            target: x86_64-apple-darwin
-            archive: parakeet-local-asr-rust-x86_64-apple-darwin.tar.gz
+          # Intel macOS (x86_64-apple-darwin) is intentionally NOT shipped: the
+          # only GitHub Intel-mac runner (macos-13) is being retired and queues
+          # for very long, and the audience is a shrinking minority with no GPU
+          # benefit here. Intel-mac users build from source (see README) or use
+          # Docker. Apple Silicon is covered by the aarch64 build above.
 
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
