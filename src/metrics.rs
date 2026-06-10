@@ -11,7 +11,8 @@ impl Metrics {
     /// Record a completed synchronous transcription and its wall-clock latency.
     pub fn record(&self, latency_ms: u64) {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
-        self.total_latency_ms.fetch_add(latency_ms, Ordering::Relaxed);
+        self.total_latency_ms
+            .fetch_add(latency_ms, Ordering::Relaxed);
     }
 
     /// Returns `(total_requests, avg_latency_ms)`.

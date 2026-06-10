@@ -8,8 +8,9 @@ use tokio::process::Command;
 pub const SAMPLE_RATE: usize = 16_000;
 
 /// Decode arbitrary audio bytes (wav/mp3/m4a/ogg/opus/flac/...) to 16 kHz mono f32
-/// by shelling out to ffmpeg. ffmpeg must be on PATH.
-pub async fn decode_to_pcm(input: &[u8]) -> Result<Vec<f32>> {
+/// by shelling out to ffmpeg. ffmpeg must be on PATH. Takes ownership of `input`
+/// to avoid copying large uploads.
+pub async fn decode_to_pcm(input: Vec<u8>) -> Result<Vec<f32>> {
     let mut child = Command::new("ffmpeg")
         .args([
             "-nostdin",
@@ -28,15 +29,20 @@ pub async fn decode_to_pcm(input: &[u8]) -> Result<Vec<f32>> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        // Kill the child if this future is dropped (e.g. client disconnects
+        // mid-transcription) so we don't orphan ffmpeg processes.
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| anyhow!("failed to spawn ffmpeg (is it installed?): {e}"))?;
 
-    let mut stdin = child.stdin.take().ok_or_else(|| anyhow!("no ffmpeg stdin"))?;
-    let input_owned = input.to_vec();
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("no ffmpeg stdin"))?;
     // Feed stdin concurrently with draining stdout to avoid a pipe deadlock on
     // large inputs. Dropping `stdin` at the end of the task closes the pipe (EOF).
     let writer = tokio::spawn(async move {
-        let _ = stdin.write_all(&input_owned).await;
+        let _ = stdin.write_all(&input).await;
     });
 
     let output = child.wait_with_output().await?;

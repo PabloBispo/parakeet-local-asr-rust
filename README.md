@@ -144,7 +144,7 @@ timestamps in seconds, absolute).
 | `ASR_MODEL` | `parakeet-tdt-0.6b-v3` | `parakeet-tdt-0.6b-v3` (25 EU langs) or `parakeet-tdt-0.6b-v2` (English) |
 | `MODELS_DIR` | `models` (`/models` in Docker) | model cache dir |
 | `ASR_DEVICE` | `cpu` | reported in `/health` (info only) |
-| `RUST_LOG` | `parakeet_asr_rust=info` | log level |
+| `RUST_LOG` | `parakeet_local_asr_rust=info` | log level |
 
 ---
 

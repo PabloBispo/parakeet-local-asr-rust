@@ -6,6 +6,7 @@
 //! at a time — which also bounds peak RAM (important on small machines / containers).
 
 use anyhow::{anyhow, Result};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::thread;
 use tokio::sync::{mpsc, oneshot};
@@ -51,9 +52,14 @@ impl EngineHandle {
                         language: None,
                         timestamp_granularity: Some(TimestampGranularity::Segment),
                     };
-                    let res = model
-                        .transcribe_with(&msg.audio, &params)
-                        .map_err(|e| anyhow!("transcription failed: {e}"));
+                    // Isolate inference panics (e.g. deep in ORT / FFI) so one bad
+                    // request becomes an error reply instead of killing the actor
+                    // and silently bricking the server.
+                    let res = catch_unwind(AssertUnwindSafe(|| {
+                        model.transcribe_with(&msg.audio, &params)
+                    }))
+                    .map_err(|_| anyhow!("engine panicked during transcription"))
+                    .and_then(|r| r.map_err(|e| anyhow!("transcription failed: {e}")));
                     let _ = msg.reply.send(res);
                 }
                 tracing::info!("engine thread shutting down");
@@ -64,6 +70,13 @@ impl EngineHandle {
             .recv()
             .map_err(|_| anyhow!("engine thread died during startup"))??;
         Ok(Self { tx })
+    }
+
+    /// Whether the engine actor thread is still alive (its receiver is open).
+    /// Goes `false` only if the thread exited (which catch_unwind now prevents
+    /// on per-request panics).
+    pub fn is_alive(&self) -> bool {
+        !self.tx.is_closed()
     }
 
     /// Transcribe one buffer of 16 kHz mono f32 samples. Awaits its turn on the

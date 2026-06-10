@@ -1133,7 +1133,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "parakeet-asr-rust"
+name = "parakeet-local-asr-rust"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1141,6 +1141,7 @@ dependencies = [
  "axum",
  "flate2",
  "futures-util",
+ "parking_lot",
  "reqwest",
  "serde",
  "serde_json",

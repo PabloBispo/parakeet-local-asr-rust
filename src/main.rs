@@ -22,21 +22,21 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
-// Allow large audio uploads (default axum limit is 2 MB).
-const MAX_UPLOAD_BYTES: usize = 2 * 1024 * 1024 * 1024; // 2 GB
+// Allow large audio uploads (default axum limit is 2 MB). Each upload is buffered
+// in RAM, so keep this bounded for modest hardware.
+const MAX_UPLOAD_BYTES: usize = 512 * 1024 * 1024; // 512 MB
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "parakeet_asr_rust=info,tower_http=warn".into()),
+                .unwrap_or_else(|_| "parakeet_local_asr_rust=info,tower_http=warn".into()),
         )
         .init();
 
     let model_id = std::env::var("ASR_MODEL").unwrap_or_else(|_| "parakeet-tdt-0.6b-v3".into());
-    let models_dir =
-        PathBuf::from(std::env::var("MODELS_DIR").unwrap_or_else(|_| "models".into()));
+    let models_dir = PathBuf::from(std::env::var("MODELS_DIR").unwrap_or_else(|_| "models".into()));
     let port: u16 = std::env::var("PORT")
         .ok()
         .and_then(|p| p.parse().ok())
@@ -48,12 +48,13 @@ async fn main() -> Result<()> {
 
     tracing::info!("loading engine (first load can take a few seconds)...");
     let engine = engine::EngineHandle::spawn(model_dir)?;
-    let jobs = jobs::JobQueue::start(engine.clone());
+    let metrics = Arc::new(metrics::Metrics::default());
+    let jobs = jobs::JobQueue::start(engine.clone(), metrics.clone());
 
     let state = AppState {
         engine,
         jobs,
-        metrics: Arc::new(metrics::Metrics::default()),
+        metrics,
         model_id,
         device,
     };
@@ -80,7 +81,7 @@ async fn main() -> Result<()> {
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("parakeet-asr-rust listening on http://{addr}");
+    tracing::info!("parakeet-local-asr-rust listening on http://{addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }

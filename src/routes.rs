@@ -44,7 +44,7 @@ async fn parse_form(mut mp: Multipart) -> Result<Form, AppError> {
             }
             "response_format" => {
                 if let Ok(v) = field.text().await {
-                    response_format = v;
+                    response_format = v.trim().to_lowercase();
                 }
             }
             // `model`, `language`, `temperature`, etc. are accepted and ignored
@@ -73,7 +73,7 @@ pub async fn transcriptions(
 ) -> Result<Response, AppError> {
     let form = parse_form(mp).await?;
     let started = Instant::now();
-    let samples = audio::decode_to_pcm(&form.file).await?;
+    let samples = audio::decode_to_pcm(form.file).await?;
     let out = pipeline::transcribe_samples(&st.engine, samples, pipeline::CHUNK_SECS).await?;
     st.metrics.record(started.elapsed().as_millis() as u64);
     Ok(render(&out, &form.response_format))
@@ -107,8 +107,10 @@ pub async fn transcriptions_stream(
     mp: Multipart,
 ) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>, AppError> {
     let form = parse_form(mp).await?;
-    let samples = audio::decode_to_pcm(&form.file).await?;
+    let samples = audio::decode_to_pcm(form.file).await?;
     let engine = st.engine.clone();
+    let metrics = st.metrics.clone();
+    let started = Instant::now();
     let chunks = audio::chunk(&samples, STREAM_CHUNK_SECS);
     let total = chunks.len();
 
@@ -139,9 +141,10 @@ pub async fn transcriptions_stream(
                 }
             }
         }
+        metrics.record(started.elapsed().as_millis() as u64);
     };
 
-    Ok(Sse::new(stream))
+    Ok(Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default()))
 }
 
 fn bounds(res: &TranscriptionResult, offset: f32) -> (f32, f32) {
@@ -191,7 +194,7 @@ pub async fn ui() -> axum::response::Html<&'static str> {
 
 pub async fn index(State(st): State<AppState>) -> Response {
     Json(json!({
-        "service": "parakeet-asr-rust",
+        "service": "parakeet-local-asr-rust",
         "model": st.model_id,
         "device": st.device,
         "ui": "/ui",
@@ -209,7 +212,21 @@ pub async fn index(State(st): State<AppState>) -> Response {
 }
 
 pub async fn health(State(st): State<AppState>) -> Response {
-    Json(json!({ "status": "ok", "model": st.model_id, "device": st.device })).into_response()
+    let alive = st.engine.is_alive();
+    let code = if alive {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    (
+        code,
+        Json(json!({
+            "status": if alive { "ok" } else { "degraded" },
+            "model": st.model_id,
+            "device": st.device,
+        })),
+    )
+        .into_response()
 }
 
 pub async fn metrics(State(st): State<AppState>) -> Response {

@@ -1,11 +1,11 @@
 [package]
-name = "parakeet-asr-rust"
+name = "parakeet-local-asr-rust"
 version = "0.1.0"
 edition = "2021"
 description = "OpenAI-compatible Parakeet ASR server (Rust + transcribe-rs / ONNX Runtime)"
 
 [[bin]]
-name = "parakeet-asr-rust"
+name = "parakeet-local-asr-rust"
 path = "src/main.rs"
 
 [dependencies]
@@ -33,6 +33,9 @@ futures-util = "0.3"
 
 # Error handling
 anyhow = "1"
+
+# Non-poisoning mutex for the job store
+parking_lot = "0.12"
 
 # IDs
 uuid = { version = "1", features = ["v4"] }

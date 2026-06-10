@@ -49,9 +49,13 @@ pub async fn ensure_model(models_dir: &Path, model_id: &str) -> Result<PathBuf> 
 
     std::fs::create_dir_all(models_dir)?;
     let tar_path = models_dir.join(format!("{}.tar.gz", spec.dir_name));
+    let part_path = models_dir.join(format!("{}.tar.gz.part", spec.dir_name));
 
     tracing::info!("downloading model '{model_id}' from {}", spec.url);
-    download(spec.url, &tar_path).await?;
+    // Download to a .part file, then rename — so a killed/partial download never
+    // looks like a complete archive.
+    download(spec.url, &part_path).await?;
+    std::fs::rename(&part_path, &tar_path)?;
 
     tracing::info!("verifying checksum");
     verify_sha256(&tar_path, spec.sha256)?;
@@ -71,7 +75,12 @@ pub async fn ensure_model(models_dir: &Path, model_id: &str) -> Result<PathBuf> 
 }
 
 async fn download(url: &str, dest: &Path) -> Result<()> {
-    let resp = reqwest::get(url).await?.error_for_status()?;
+    // Fail fast on a dead/stalled CDN instead of hanging server startup forever.
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(1800))
+        .build()?;
+    let resp = client.get(url).send().await?.error_for_status()?;
     let mut file = File::create(dest)?;
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {

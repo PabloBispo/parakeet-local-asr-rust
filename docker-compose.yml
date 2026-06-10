@@ -1,8 +1,8 @@
 services:
   asr:
     build: .
-    image: parakeet-asr-rust:latest
-    container_name: parakeet-asr-rust
+    image: parakeet-local-asr-rust:latest
+    container_name: parakeet-local-asr-rust
     ports:
       - "8090:8090"
     environment:

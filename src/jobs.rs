@@ -1,12 +1,25 @@
 //! Async job queue for long audio. Submissions go onto a bounded channel and a
 //! single background worker drains them through the (serialized) engine.
+//!
+//! The in-memory store is bounded: finished jobs are evicted after a TTL, and a
+//! hard cap drops the oldest finished jobs if the map still grows too large. The
+//! store uses a non-poisoning `parking_lot::Mutex` so a panic elsewhere can never
+//! turn `/metrics`, `/async`, or `/jobs/{id}` into permanent failures.
 
 use crate::engine::EngineHandle;
+use crate::metrics::Metrics;
 use crate::pipeline;
 use crate::transcript::TranscriptOutput;
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
+
+/// How long a finished job is retained before eviction.
+const JOB_TTL: Duration = Duration::from_secs(3600);
+/// Hard cap on stored jobs; oldest finished jobs are dropped beyond this.
+const MAX_JOBS: usize = 1000;
 
 #[derive(Clone, Copy, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -25,6 +38,8 @@ pub struct Job {
     pub result: Option<TranscriptOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip)]
+    created_at: Instant,
 }
 
 type JobStore = Arc<Mutex<HashMap<String, Job>>>;
@@ -42,7 +57,7 @@ pub struct JobQueue {
 }
 
 impl JobQueue {
-    pub fn start(engine: EngineHandle) -> Self {
+    pub fn start(engine: EngineHandle, metrics: Arc<Metrics>) -> Self {
         let (tx, mut rx) = mpsc::channel::<JobRequest>(128);
         let store: JobStore = Arc::new(Mutex::new(HashMap::new()));
 
@@ -50,8 +65,11 @@ impl JobQueue {
         tokio::spawn(async move {
             while let Some(req) = rx.recv().await {
                 set_status(&worker_store, &req.job_id, JobStatus::Processing);
-                let outcome = process(&engine, &req.audio_bytes).await;
-                let mut guard = worker_store.lock().unwrap();
+                let started = Instant::now();
+                let outcome = process(&engine, req.audio_bytes).await;
+                metrics.record(started.elapsed().as_millis() as u64);
+
+                let mut guard = worker_store.lock();
                 if let Some(job) = guard.get_mut(&req.job_id) {
                     match outcome {
                         Ok(out) => {
@@ -73,47 +91,82 @@ impl JobQueue {
     /// Enqueue audio for async transcription; returns the new job id.
     pub async fn submit(&self, audio_bytes: Vec<u8>) -> String {
         let job_id = uuid::Uuid::new_v4().to_string();
-        self.store.lock().unwrap().insert(
-            job_id.clone(),
-            Job {
-                job_id: job_id.clone(),
-                status: JobStatus::Queued,
-                result: None,
-                error: None,
-            },
-        );
+        {
+            let mut guard = self.store.lock();
+            evict(&mut guard);
+            guard.insert(
+                job_id.clone(),
+                Job {
+                    job_id: job_id.clone(),
+                    status: JobStatus::Queued,
+                    result: None,
+                    error: None,
+                    created_at: Instant::now(),
+                },
+            );
+        }
         // Awaits if the channel is full — natural back-pressure.
-        let _ = self
+        if self
             .tx
             .send(JobRequest {
                 job_id: job_id.clone(),
                 audio_bytes,
             })
-            .await;
+            .await
+            .is_err()
+        {
+            // Worker task is gone — don't leave the job stuck in Queued forever.
+            if let Some(job) = self.store.lock().get_mut(&job_id) {
+                job.status = JobStatus::Failed;
+                job.error = Some("job worker unavailable".into());
+            }
+        }
         job_id
     }
 
     pub fn get(&self, job_id: &str) -> Option<Job> {
-        self.store.lock().unwrap().get(job_id).cloned()
+        self.store.lock().get(job_id).cloned()
     }
 
     pub fn depth(&self) -> usize {
         self.store
             .lock()
-            .unwrap()
             .values()
             .filter(|j| matches!(j.status, JobStatus::Queued | JobStatus::Processing))
             .count()
     }
 }
 
-async fn process(engine: &EngineHandle, bytes: &[u8]) -> anyhow::Result<TranscriptOutput> {
+async fn process(engine: &EngineHandle, bytes: Vec<u8>) -> anyhow::Result<TranscriptOutput> {
     let samples = crate::audio::decode_to_pcm(bytes).await?;
     pipeline::transcribe_samples(engine, samples, pipeline::CHUNK_SECS).await
 }
 
 fn set_status(store: &JobStore, job_id: &str, status: JobStatus) {
-    if let Some(job) = store.lock().unwrap().get_mut(job_id) {
+    if let Some(job) = store.lock().get_mut(job_id) {
         job.status = status;
+    }
+}
+
+/// Evict finished jobs older than the TTL; if still over `MAX_JOBS`, drop the
+/// oldest finished jobs. In-flight (Queued/Processing) jobs are never evicted.
+fn evict(store: &mut HashMap<String, Job>) {
+    store.retain(|_, j| {
+        let finished = matches!(j.status, JobStatus::Done | JobStatus::Failed);
+        !(finished && j.created_at.elapsed() > JOB_TTL)
+    });
+
+    if store.len() <= MAX_JOBS {
+        return;
+    }
+    let mut finished: Vec<(String, Instant)> = store
+        .iter()
+        .filter(|(_, j)| matches!(j.status, JobStatus::Done | JobStatus::Failed))
+        .map(|(k, j)| (k.clone(), j.created_at))
+        .collect();
+    finished.sort_by_key(|(_, t)| *t);
+    let to_remove = store.len().saturating_sub(MAX_JOBS);
+    for (k, _) in finished.into_iter().take(to_remove) {
+        store.remove(&k);
     }
 }
