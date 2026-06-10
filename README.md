@@ -12,7 +12,23 @@ Sibling of the Python [`parakeet-asr-server`](../parakeet-asr-server) — **same
 
 ---
 
-## Run it (1 command)
+## Install (one-liner)
+
+Prebuilt, self-contained binary (macOS & Linux). First-party script + GitHub
+Releases, **SHA-256 verified**, installs to `~/.local/bin` (no sudo):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PabloBispo/parakeet-local-asr-rust/master/install.sh | sh
+```
+
+Audit it first if you like: `curl -fsSL .../install.sh | less`. Then run
+`parakeet-local-asr-rust` and open **http://localhost:8090/ui**. The server detects
+`ffmpeg` and, if it's missing, tells you the exact install command (and the web UI
+shows a banner). Windows: grab the `.zip` from the [Releases](https://github.com/PabloBispo/parakeet-local-asr-rust/releases) page.
+
+---
+
+## Run with Docker
 
 ```bash
 docker compose up --build

@@ -12,6 +12,7 @@ use crate::pipeline;
 use crate::transcript::TranscriptOutput;
 use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -57,7 +58,7 @@ pub struct JobQueue {
 }
 
 impl JobQueue {
-    pub fn start(engine: EngineHandle, metrics: Arc<Metrics>) -> Self {
+    pub fn start(engine: EngineHandle, metrics: Arc<Metrics>, ffmpeg_bin: PathBuf) -> Self {
         let (tx, mut rx) = mpsc::channel::<JobRequest>(128);
         let store: JobStore = Arc::new(Mutex::new(HashMap::new()));
 
@@ -66,7 +67,7 @@ impl JobQueue {
             while let Some(req) = rx.recv().await {
                 set_status(&worker_store, &req.job_id, JobStatus::Processing);
                 let started = Instant::now();
-                let outcome = process(&engine, req.audio_bytes).await;
+                let outcome = process(&engine, &ffmpeg_bin, req.audio_bytes).await;
                 metrics.record(started.elapsed().as_millis() as u64);
 
                 let mut guard = worker_store.lock();
@@ -137,8 +138,12 @@ impl JobQueue {
     }
 }
 
-async fn process(engine: &EngineHandle, bytes: Vec<u8>) -> anyhow::Result<TranscriptOutput> {
-    let samples = crate::audio::decode_to_pcm(bytes).await?;
+async fn process(
+    engine: &EngineHandle,
+    ffmpeg_bin: &Path,
+    bytes: Vec<u8>,
+) -> anyhow::Result<TranscriptOutput> {
+    let samples = crate::audio::decode_to_pcm(ffmpeg_bin, bytes).await?;
     pipeline::transcribe_samples(engine, samples, pipeline::CHUNK_SECS).await
 }
 

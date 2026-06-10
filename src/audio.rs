@@ -1,6 +1,7 @@
 //! Audio decoding (via ffmpeg) and chunking.
 
 use anyhow::{anyhow, Result};
+use std::path::Path;
 use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -8,10 +9,10 @@ use tokio::process::Command;
 pub const SAMPLE_RATE: usize = 16_000;
 
 /// Decode arbitrary audio bytes (wav/mp3/m4a/ogg/opus/flac/...) to 16 kHz mono f32
-/// by shelling out to ffmpeg. ffmpeg must be on PATH. Takes ownership of `input`
-/// to avoid copying large uploads.
-pub async fn decode_to_pcm(input: Vec<u8>) -> Result<Vec<f32>> {
-    let mut child = Command::new("ffmpeg")
+/// by shelling out to ffmpeg (`ffmpeg_bin`). Takes ownership of `input` to avoid
+/// copying large uploads.
+pub async fn decode_to_pcm(ffmpeg_bin: &Path, input: Vec<u8>) -> Result<Vec<f32>> {
+    let mut child = Command::new(ffmpeg_bin)
         .args([
             "-nostdin",
             "-loglevel",

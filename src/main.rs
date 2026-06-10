@@ -1,6 +1,7 @@
 mod audio;
 mod engine;
 mod error;
+mod ffmpeg;
 mod jobs;
 mod metrics;
 mod model;
@@ -48,13 +49,25 @@ async fn main() -> Result<()> {
 
     tracing::info!("loading engine (first load can take a few seconds)...");
     let engine = engine::EngineHandle::spawn(model_dir)?;
+
+    let ffmpeg = Arc::new(ffmpeg::detect());
+    if ffmpeg.available {
+        tracing::info!("ffmpeg found (source: {})", ffmpeg.source);
+    } else {
+        tracing::warn!(
+            "ffmpeg NOT found — audio decoding will fail until installed: {}",
+            ffmpeg::Ffmpeg::install_hint()
+        );
+    }
+
     let metrics = Arc::new(metrics::Metrics::default());
-    let jobs = jobs::JobQueue::start(engine.clone(), metrics.clone());
+    let jobs = jobs::JobQueue::start(engine.clone(), metrics.clone(), ffmpeg.bin.clone());
 
     let state = AppState {
         engine,
         jobs,
         metrics,
+        ffmpeg,
         model_id,
         device,
     };

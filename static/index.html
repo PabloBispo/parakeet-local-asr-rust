@@ -227,6 +227,59 @@
   .live { display: inline-flex; align-items: center; gap: 5px; color: var(--sand); font: 500 11px var(--mono); }
   .live .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--sand); animation: pulse 1s ease-in-out infinite; }
   @keyframes pulse { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+
+  /* ── ffmpeg warning banner ── */
+  #ffmpeg-banner {
+    display: none;
+    margin-bottom: 18px;
+    background: rgba(229,84,75,.08);
+    border: 1px solid rgba(229,84,75,.35);
+    border-left: 3px solid var(--err);
+    border-radius: 4px;
+    padding: 14px 16px;
+    font: 14px/1.55 var(--sans);
+    color: var(--fg);
+  }
+  #ffmpeg-banner.visible { display: block; }
+  .ffmpeg-banner-title {
+    font: 600 13.5px/1.3 var(--mono);
+    color: var(--err);
+    margin: 0 0 5px;
+  }
+  .ffmpeg-banner-sub {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0 0 11px;
+  }
+  .ffmpeg-cmd-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .ffmpeg-cmd {
+    flex: 1; min-width: 0;
+    background: var(--panel2);
+    border: 1px solid var(--border2);
+    border-radius: 3px;
+    padding: 7px 11px;
+    font: 600 12.5px/1.4 var(--mono);
+    color: var(--sand);
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .ffmpeg-chip {
+    display: inline-flex; align-items: center;
+    font: 600 10.5px/1 var(--mono);
+    padding: 2px 6px; border-radius: 3px;
+    background: rgba(229,84,75,.15);
+    color: var(--err);
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .drop.ffmpeg-disabled {
+    opacity: .55;
+    pointer-events: none;
+    border-style: dashed;
+    border-color: var(--border);
+  }
 </style>
 </head>
 <body>
@@ -242,6 +295,16 @@
 </header>
 
 <main>
+  <div id="ffmpeg-banner" role="alert" aria-live="polite">
+    <div class="ffmpeg-banner-title">⚠ ffmpeg not installed on the server</div>
+    <div class="ffmpeg-banner-sub">Audio cannot be decoded until ffmpeg is installed. After installing, restart the server.</div>
+    <div class="ffmpeg-cmd-row">
+      <code class="ffmpeg-cmd" id="ffmpeg-cmd-text"></code>
+      <button class="btn" id="ffmpeg-copy-btn" title="Copy install command">⧉ copy</button>
+      <button class="btn" id="ffmpeg-recheck-btn">↻ recheck</button>
+    </div>
+  </div>
+
   <div id="drop" class="drop" role="button" tabindex="0" aria-label="Upload audio">
     <div class="ico">🎙</div>
     <div class="big">Drop audio here or click to choose</div>
@@ -704,6 +767,35 @@ $("#q").addEventListener("input", e => {
 $("#groupToggle").addEventListener("change", e => { groupWA = e.target.checked; render(); });
 
 /* ============================================================
+   FFMPEG BANNER
+   ============================================================ */
+function updateFfmpegBanner(health){
+  const banner = $("#ffmpeg-banner");
+  const ffmpegOk = health?.ffmpeg !== false;   // treat missing field (old server) as ok
+  if(ffmpegOk){
+    banner.classList.remove("visible");
+    $("#drop").classList.remove("ffmpeg-disabled");
+    return;
+  }
+  // ffmpeg is missing — show banner
+  const cmd = health?.ffmpeg_install || "ffmpeg";
+  $("#ffmpeg-cmd-text").textContent = cmd;
+  banner.classList.add("visible");
+  // grey out the drop zone as a soft hint (non-blocking: pointer-events none set via CSS)
+  $("#drop").classList.add("ffmpeg-disabled");
+}
+
+/* ── banner button wiring (run once; buttons persist in DOM) ── */
+$("#ffmpeg-copy-btn").addEventListener("click", () => {
+  const cmd = $("#ffmpeg-cmd-text").textContent;
+  if(!cmd) return;
+  navigator.clipboard.writeText(cmd)
+    .then(() => toast("Install command copied!", "ok"))
+    .catch(() => toast("Copy failed (no permission?)", "err"));
+});
+$("#ffmpeg-recheck-btn").addEventListener("click", () => refreshHealth());
+
+/* ============================================================
    HEALTH + METRICS
    ============================================================ */
 async function refreshHealth(){
@@ -712,10 +804,14 @@ async function refreshHealth(){
     if(!r.ok) throw new Error();
     const j = await r.json();
     $("#hdot").className = "dot up";
-    $("#hinfo").textContent = (j.model||MODEL) + " · " + (j.device||"?");
+    const ffmpegOk = j?.ffmpeg !== false;
+    const chip = ffmpegOk ? "" : ' <span class="ffmpeg-chip">ffmpeg ✗</span>';
+    $("#hinfo").innerHTML = esc((j.model||MODEL) + " · " + (j.device||"?")) + chip;
+    updateFfmpegBanner(j);
   } catch {
     $("#hdot").className = "dot down";
     $("#hinfo").textContent = "server down";
+    updateFfmpegBanner(null);
   }
 }
 async function refreshStats(){

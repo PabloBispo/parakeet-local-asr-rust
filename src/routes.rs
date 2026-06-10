@@ -65,6 +65,19 @@ async fn parse_form(mut mp: Multipart) -> Result<Form, AppError> {
     })
 }
 
+/// Reject transcription requests early (with an actionable message) when ffmpeg
+/// is not available to decode audio.
+fn ensure_ffmpeg(st: &AppState) -> Result<(), AppError> {
+    if st.ffmpeg.available {
+        Ok(())
+    } else {
+        Err(AppError(anyhow!(
+            "ffmpeg is not installed on the server, so audio cannot be decoded. Install it and restart: {}",
+            crate::ffmpeg::Ffmpeg::install_hint()
+        )))
+    }
+}
+
 // ── POST /v1/audio/transcriptions ─────────────────────────────────────────────
 
 pub async fn transcriptions(
@@ -72,8 +85,9 @@ pub async fn transcriptions(
     mp: Multipart,
 ) -> Result<Response, AppError> {
     let form = parse_form(mp).await?;
+    ensure_ffmpeg(&st)?;
     let started = Instant::now();
-    let samples = audio::decode_to_pcm(form.file).await?;
+    let samples = audio::decode_to_pcm(&st.ffmpeg.bin, form.file).await?;
     let out = pipeline::transcribe_samples(&st.engine, samples, pipeline::CHUNK_SECS).await?;
     st.metrics.record(started.elapsed().as_millis() as u64);
     Ok(render(&out, &form.response_format))
@@ -107,7 +121,8 @@ pub async fn transcriptions_stream(
     mp: Multipart,
 ) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>, AppError> {
     let form = parse_form(mp).await?;
-    let samples = audio::decode_to_pcm(form.file).await?;
+    ensure_ffmpeg(&st)?;
+    let samples = audio::decode_to_pcm(&st.ffmpeg.bin, form.file).await?;
     let engine = st.engine.clone();
     let metrics = st.metrics.clone();
     let started = Instant::now();
@@ -164,6 +179,7 @@ pub async fn transcriptions_async(
     mp: Multipart,
 ) -> Result<Response, AppError> {
     let form = parse_form(mp).await?;
+    ensure_ffmpeg(&st)?;
     let job_id = st.jobs.submit(form.file).await;
     Ok((
         StatusCode::ACCEPTED,
@@ -197,6 +213,7 @@ pub async fn index(State(st): State<AppState>) -> Response {
         "service": "parakeet-local-asr-rust",
         "model": st.model_id,
         "device": st.device,
+        "ffmpeg": st.ffmpeg.available,
         "ui": "/ui",
         "openai_base_url": "/v1",
         "endpoints": [
@@ -212,8 +229,11 @@ pub async fn index(State(st): State<AppState>) -> Response {
 }
 
 pub async fn health(State(st): State<AppState>) -> Response {
-    let alive = st.engine.is_alive();
-    let code = if alive {
+    let engine_alive = st.engine.is_alive();
+    let ffmpeg_ok = st.ffmpeg.available;
+    // 200 as long as the engine is up (so the UI loads and can surface the ffmpeg
+    // banner); 503 only when the engine itself is dead.
+    let code = if engine_alive {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
@@ -221,7 +241,13 @@ pub async fn health(State(st): State<AppState>) -> Response {
     (
         code,
         Json(json!({
-            "status": if alive { "ok" } else { "degraded" },
+            "status": if engine_alive && ffmpeg_ok { "ok" } else { "degraded" },
+            "engine": engine_alive,
+            "ffmpeg": ffmpeg_ok,
+            "ffmpeg_source": st.ffmpeg.source,
+            "ffmpeg_install": crate::ffmpeg::Ffmpeg::install_hint(),
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
             "model": st.model_id,
             "device": st.device,
         })),
