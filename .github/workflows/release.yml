@@ -64,6 +64,16 @@ jobs:
           # Disable the default --deny warnings override so CI doesn't break
           # on upstream deprecation warnings outside our control.
           rustflags: ""
+          # Use the explicit cache step below instead (ref-independent).
+          cache: false
+
+      # Cache ~/.cargo + target/ keyed on the target (not the git ref), so a
+      # release with unchanged dependencies/code restores the cache instead of
+      # recompiling ORT + every crate from scratch on each tag.
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ matrix.target }}
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
