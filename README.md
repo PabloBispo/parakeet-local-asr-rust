@@ -31,6 +31,17 @@ shows a banner). Windows: grab the `.zip` from the [Releases](https://github.com
 > or just use Docker below. The binary is self-contained (ONNX Runtime is statically
 > linked); you only need `ffmpeg` at runtime.
 
+### Updating
+
+```bash
+parakeet-local-asr-rust update
+```
+
+Self-updates from the latest GitHub Release. It downloads the platform archive,
+**verifies it against the published `SHA256SUMS`**, and only replaces the binary if
+its **content hash** differs from what you're running (so it's a no-op when you're
+already current). `parakeet-local-asr-rust version` prints the installed version.
+
 ---
 
 ## Run with Docker

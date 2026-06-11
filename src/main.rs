@@ -9,6 +9,7 @@ mod pipeline;
 mod routes;
 mod state;
 mod transcript;
+mod update;
 
 use anyhow::Result;
 use axum::{
@@ -29,6 +30,25 @@ const MAX_UPLOAD_BYTES: usize = 512 * 1024 * 1024; // 512 MB
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let mut args = std::env::args().skip(1);
+    match args.next().as_deref() {
+        Some("update") => return update::run().await,
+        Some("version") | Some("--version") | Some("-V") => {
+            println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Some("help") | Some("--help") | Some("-h") => {
+            print_help();
+            return Ok(());
+        }
+        None | Some("serve") => {}
+        Some(other) => {
+            eprintln!("unknown command: {other}\n");
+            print_help();
+            std::process::exit(2);
+        }
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -97,4 +117,17 @@ async fn main() -> Result<()> {
     tracing::info!("parakeet-local-asr-rust listening on http://{addr}");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn print_help() {
+    println!(
+        "parakeet-local-asr-rust {} — OpenAI-compatible Parakeet ASR server\n\n\
+USAGE:\n  \
+parakeet-local-asr-rust [serve]   start the server (default)\n  \
+parakeet-local-asr-rust update    update to the latest release (checksum-verified)\n  \
+parakeet-local-asr-rust version   print the version\n  \
+parakeet-local-asr-rust help      show this help\n\n\
+ENV: PORT (8090) · ASR_MODEL · MODELS_DIR · ASR_DEVICE · FFMPEG_PATH · RUST_LOG",
+        env!("CARGO_PKG_VERSION")
+    );
 }

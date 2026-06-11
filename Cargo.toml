@@ -1,6 +1,6 @@
 [package]
 name = "parakeet-local-asr-rust"
-version = "0.1.0"
+version = "0.1.3"
 edition = "2021"
 description = "OpenAI-compatible Parakeet ASR server (Rust + transcribe-rs / ONNX Runtime)"
 
