@@ -1,4 +1,5 @@
 mod audio;
+mod docs;
 mod engine;
 mod error;
 mod ffmpeg;
@@ -95,6 +96,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/", get(routes::index))
         .route("/ui", get(routes::ui))
+        .route("/docs", get(routes::docs))
         .route("/health", get(routes::health))
         .route("/metrics", get(routes::metrics))
         .route("/v1/audio/transcriptions", post(routes::transcriptions))
@@ -115,6 +117,16 @@ async fn main() -> Result<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("parakeet-local-asr-rust listening on http://{addr}");
+
+    // Open the UI in the default browser (best-effort; set ASR_NO_OPEN=1 to skip,
+    // e.g. on a headless server / in Docker). The listener is already bound, so the
+    // browser's connection is queued until the accept loop below picks it up.
+    if std::env::var_os("ASR_NO_OPEN").is_none() {
+        let url = format!("http://localhost:{port}/ui");
+        tracing::info!("opening {url}");
+        let _ = open::that_detached(&url);
+    }
+
     axum::serve(listener, app).await?;
     Ok(())
 }

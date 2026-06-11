@@ -8,6 +8,7 @@ services:
     environment:
       ASR_MODEL: parakeet-tdt-0.6b-v3   # or parakeet-tdt-0.6b-v2 (English-only)
       ASR_DEVICE: cpu
+      ASR_NO_OPEN: "1"                  # headless container: don't try to open a browser
     volumes:
       - parakeet-models:/models          # model cache — survives restarts
     restart: unless-stopped

@@ -208,6 +208,10 @@ pub async fn ui() -> axum::response::Html<&'static str> {
     axum::response::Html(include_str!("../static/index.html"))
 }
 
+pub async fn docs() -> axum::response::Html<&'static str> {
+    axum::response::Html(crate::docs::html())
+}
+
 pub async fn index(State(st): State<AppState>) -> Response {
     Json(json!({
         "service": "parakeet-local-asr-rust",

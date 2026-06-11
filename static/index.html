@@ -57,6 +57,12 @@
   }
   .brand h1 .slash { color: var(--muted2); margin: 0 2px; }
   .brand h1 .rust { color: var(--rust); }
+  .docs-link {
+    flex-shrink: 0; font: 600 11px/1 var(--mono); color: var(--muted);
+    text-decoration: none; border: 1px solid var(--border2); border-radius: 4px;
+    padding: 6px 11px; transition: color .15s, border-color .15s;
+  }
+  .docs-link:hover { color: var(--fg); border-color: var(--rust); }
   .hmeta {
     font: 500 11px/1 var(--mono); color: var(--muted);
     display: flex; gap: 8px; align-items: center; flex-shrink: 0;
@@ -288,6 +294,7 @@
     <span class="crab">🦀</span>
     <h1>parakeet-asr<span class="slash">//</span><span class="rust">rust</span></h1>
   </div>
+  <a class="docs-link" href="/docs" target="_blank" rel="noopener" title="API &amp; integration docs">docs ↗</a>
   <div class="hmeta" id="hmeta" title="server health">
     <span class="dot" id="hdot"></span><span id="hinfo">connecting…</span>
   </div>

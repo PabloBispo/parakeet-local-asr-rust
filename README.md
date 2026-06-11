@@ -72,8 +72,11 @@ to 16 kHz mono internally.
 
 ### Web UI
 
-Open **http://localhost:8090/ui** — a built-in, single-file UI (embedded in the binary,
-no separate build, works offline). Drag-drop multiple files, auto-transcribe, playback
+On startup the server **opens the UI in your default browser** automatically
+(set `ASR_NO_OPEN=1` to disable, e.g. on a headless box). Or open
+**http://localhost:8090/ui** yourself — a built-in, single-file UI (embedded in the
+binary, no separate build, works offline). A **`docs ↗`** button in the header opens
+the rendered API/integration docs at `/docs`. Drag-drop multiple files, auto-transcribe, playback
 with click-to-seek segment timestamps, full-text search, WhatsApp-audio grouping, and
 copy / download `.srt` / `.txt`. Your library is kept client-side (IndexedDB) — nothing
 is stored server-side.
