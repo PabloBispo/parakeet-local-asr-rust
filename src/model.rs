@@ -23,9 +23,13 @@ fn spec(model_id: &str) -> Result<ModelSpec> {
     match model_id {
         "parakeet-tdt-0.6b-v3" | "v3" | "default" => Ok(ModelSpec {
             dir_name: "parakeet-tdt-0.6b-v3-int8",
-            url: "https://blob.handy.computer/parakeet-v3-int8.tar.gz",
-            sha256: "43d37191602727524a7d8c6da0eef11c4ba24320f5b4730f1a2497befc2efa77",
+            // First-party mirror on our own GitHub Releases (models-v1) — no
+            // dependency on a third-party CDN for the default model.
+            url: "https://github.com/PabloBispo/parakeet-local-asr-rust/releases/download/models-v1/parakeet-v3-int8.tar.gz",
+            sha256: "734f0c00ab60687d14bc1560319209af82b71e8b0be064dcc2fae46a70f0df7d",
         }),
+        // v2 is secondary and still pulled from the upstream Handy CDN (not
+        // mirrored). The default path (v3 above) is fully first-party.
         "parakeet-tdt-0.6b-v2" | "v2" => Ok(ModelSpec {
             dir_name: "parakeet-tdt-0.6b-v2-int8",
             url: "https://blob.handy.computer/parakeet-v2-int8.tar.gz",
