@@ -19,7 +19,13 @@ non-empty string; the server ignores it).
 | `POST` | `/v1/audio/transcriptions/stream` | SSE — one event per audio chunk; last has `"final": true` |
 | `POST` | `/v1/audio/transcriptions/async` | Enqueue long audio → `202 {"job_id": "...", "status": "queued"}` |
 | `GET`  | `/v1/audio/jobs/{job_id}` | Poll async job — `{"status": "queued\|processing\|done\|failed", "result": ...}` |
-| `GET`  | `/health` | `{"status": "ok", "model": "parakeet-tdt-0.6b-v3", "device": "cpu"}` |
+| `GET`  | `/v1/history?limit=N` | Saved recordings, newest first (see below) |
+| `GET`  | `/v1/history/{id}` | One recording with `segments[]` |
+| `GET`  | `/v1/history/{id}/audio` | The archived original audio bytes |
+| `GET`  | `/v1/history/{id}/download?format=txt\|srt\|vtt\|json` | Transcript as a file attachment |
+| `DELETE` | `/v1/history/{id}` | Delete record + text + audio → `{"deleted": true}` |
+| `GET`  | `/v1/watcher` | Folder-watcher status and counters |
+| `GET`  | `/health` | `{"status": "ok", "model": ..., "device": ..., "history_count": N, "watcher_enabled": bool}` |
 | `GET`  | `/metrics` | `{"queue_depth": N, "total_requests": N, "avg_latency_ms": N}` |
 
 `response_format` (sync endpoint): `json` (default, `{"text": "..."}`), `text`,
@@ -59,6 +65,83 @@ curl -N -s -X POST http://localhost:8090/v1/audio/transcriptions/stream \
   -F "model=parakeet-tdt-0.6b-v3"
 # Each line: data: {"text":"...","chunk_index":0,"total_chunks":3,"start":0.0,"end":8.4,"final":false}
 # Last line:  data: {"text":"...","chunk_index":2,"total_chunks":3,"start":16.1,"end":22.3,"final":true}
+```
+
+---
+
+## Folder watcher & persistent history
+
+The server can watch folders and transcribe audio files as they land, saving every
+result under a data home (`$RAS_HOME`, default `~/.ras`) that the `/v1/history`
+endpoints expose.
+
+```bash
+# transcribe every .ogg (WhatsApp voice notes) that appears in ~/Downloads
+parakeet-local-asr-rust serve --watch ~/Downloads --watch-ext .ogg
+```
+
+| Flag | Env | Meaning |
+|------|-----|---------|
+| `--watch <dir>` (repeatable) | `ASR_WATCH_DIRS` (comma-separated) | folders to watch, non-recursive |
+| `--watch-ext <ext>` (repeatable) | `ASR_WATCH_EXTS` (comma-separated) | extensions to pick up, default `.ogg` |
+| `--no-notify` | `ASR_NO_NOTIFY=1` | no desktop notification per transcript |
+| — | `RAS_HOME` | data home, default `~/.ras` |
+| — | `ASR_NO_HISTORY=1` | do not persist anything |
+
+```text
+$RAS_HOME/
+├── models/                model cache (unless MODELS_DIR is set)
+├── transcripts/<uuid>.json + <uuid>.txt
+├── audio/<uuid>-<name>    the original audio, verbatim
+└── watcher_state.json     dedup state (size + mtime per path)
+```
+
+In-progress downloads (`.crdownload`, `.part`, `.download`, `.tmp`) and dotfiles are
+ignored, and a file is only read once its size has stopped changing — so the rename a
+browser performs at the end of a download is what triggers the transcription. On
+macOS the notification copies the transcript to the clipboard (on click with
+`terminal-notifier` installed, immediately otherwise); on Linux via `notify-send` +
+`xclip`.
+
+Recordings are saved for successful API transcriptions and for every watched file
+(including failures, with `"status": "failed"`). The SSE streaming endpoint does not
+persist.
+
+```bash
+# list the most recent recordings (segments omitted; fetch one by id for those)
+curl -s "http://localhost:8090/v1/history?limit=20" | jq '.items[] | {id, name, source, status, duration}'
+
+# one record, with timestamps
+curl -s http://localhost:8090/v1/history/<id> | jq '.segments[] | {start, end, text}'
+
+# subtitles / plain text as a download, and the original audio
+curl -s -OJ "http://localhost:8090/v1/history/<id>/download?format=srt"
+curl -s http://localhost:8090/v1/history/<id>/audio -o voice-note.ogg
+
+curl -s -X DELETE http://localhost:8090/v1/history/<id>      # {"deleted":true}
+
+# watcher status
+curl -s http://localhost:8090/v1/watcher | jq
+# {"enabled":true,"dirs":["/Users/me/Downloads"],"exts":[".ogg"],"started_at_ms":...,
+#  "files_seen":3,"files_processed":3,
+#  "last_file":{"name":"voice.ogg","history_id":"<uuid>","at_ms":...}}
+```
+
+A `HistoryRecord` is:
+
+```json
+{
+  "id": "<uuid>",
+  "name": "voice note.ogg",
+  "source": "api | api-async | watcher",
+  "created_at_ms": 1730000000000,
+  "duration": 14.4,
+  "status": "done | failed",
+  "error": null,
+  "text": "...",
+  "segments": [{ "id": 0, "start": 0.0, "end": 3.7, "text": "..." }],
+  "audio_file": "<uuid>-voice_note.ogg"
+}
 ```
 
 ---

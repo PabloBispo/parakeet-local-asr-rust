@@ -78,8 +78,31 @@ On startup the server **opens the UI in your default browser** automatically
 binary, no separate build, works offline). A **`docs ↗`** button in the header opens
 the rendered API/integration docs at `/docs`. Drag-drop multiple files, auto-transcribe, playback
 with click-to-seek segment timestamps, full-text search, WhatsApp-audio grouping, and
-copy / download `.srt` / `.txt`. Your library is kept client-side (IndexedDB) — nothing
-is stored server-side.
+copy / download `.srt` / `.txt`. The browser keeps its own drag-drop library in
+IndexedDB; everything the **server** transcribed is listed separately from `~/.ras`.
+
+### Folder watcher
+
+Point the server at a folder and every audio file that lands there is transcribed
+automatically — save a WhatsApp voice note to `~/Downloads` and the transcript is
+waiting for you:
+
+```bash
+parakeet-local-asr-rust serve --watch ~/Downloads --watch-ext .ogg
+```
+
+- `--watch <dir>` and `--watch-ext <ext>` are repeatable (`--watch-ext` defaults to
+  `.ogg`); `--no-notify` turns the desktop notification off.
+- Partial downloads (`.crdownload`, `.part`, …) are ignored until the downloader
+  renames them, and a file is only read once its size has stopped changing.
+- Each result is saved to the history (visible in the UI) and announced with a
+  desktop notification. On macOS with
+  [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) installed
+  (`brew install terminal-notifier`), **clicking the notification copies the
+  transcript** to the clipboard; otherwise it is copied immediately via `pbcopy`.
+  On Linux it uses `notify-send` + `xclip` when present.
+- Already-transcribed files are remembered in `~/.ras/watcher_state.json`, so a
+  restart does not re-transcribe the whole folder.
 
 ### Run without Docker
 
@@ -165,7 +188,13 @@ transcribe→summarize), JS/TS, SSE streaming, and async job polling.
 | `POST` | `/v1/audio/transcriptions/stream` | SSE — one event per ~20 s chunk, partial text as it's ready |
 | `POST` | `/v1/audio/transcriptions/async` | → `202 {job_id}` for very long audio |
 | `GET`  | `/v1/audio/jobs/{id}` | poll job: `queued\|processing\|done\|failed` + result |
-| `GET`  | `/health` | `{status, model, device}` |
+| `GET`  | `/v1/history?limit=N` | saved recordings, newest first (`limit` default 100, max 500; no `segments`) |
+| `GET`  | `/v1/history/{id}` | one recording, `segments[]` included |
+| `GET`  | `/v1/history/{id}/audio` | the archived original audio |
+| `GET`  | `/v1/history/{id}/download?format=` | `txt` (default) \| `srt` \| `vtt` \| `json` as an attachment |
+| `DELETE` | `/v1/history/{id}` | delete record + text + audio → `{"deleted": true}` |
+| `GET`  | `/v1/watcher` | folder-watcher status + counters |
+| `GET`  | `/health` | `{status, model, device, history_count, watcher_enabled}` |
 | `GET`  | `/metrics` | `{queue_depth, total_requests, avg_latency_ms}` |
 
 `verbose_json` adds `duration` and `segments[]` (`id`, `start`, `end`, `text`;
@@ -177,8 +206,14 @@ timestamps in seconds, absolute).
 |---|---|---|
 | `PORT` | `8090` | listen port |
 | `ASR_MODEL` | `parakeet-tdt-0.6b-v3` | `parakeet-tdt-0.6b-v3` (25 EU langs) or `parakeet-tdt-0.6b-v2` (English) |
-| `MODELS_DIR` | `models` (`/models` in Docker) | model cache dir |
+| `MODELS_DIR` | `$RAS_HOME/models` (`/models` in Docker) | model cache dir |
 | `ASR_DEVICE` | `cpu` | reported in `/health` (info only) |
+| `RAS_HOME` | `~/.ras` | data home: transcripts, archived audio, model cache, watcher state |
+| `ASR_WATCH_DIRS` | — | comma-separated folders to watch (same as `--watch`) |
+| `ASR_WATCH_EXTS` | `.ogg` | comma-separated extensions the watcher picks up |
+| `ASR_NO_NOTIFY` | — | `1` disables desktop notifications |
+| `ASR_NO_HISTORY` | — | `1` disables persistence — nothing is written to `~/.ras` |
+| `ASR_NO_OPEN` | — | `1` does not open the browser on startup |
 | `RUST_LOG` | `parakeet_local_asr_rust=info` | log level |
 
 ---
@@ -193,18 +228,51 @@ timestamps in seconds, absolute).
 - Long audio is **chunked** (240 s for sync/async, 20 s for streaming) and timestamps
   are stitched back to absolute time.
 - Model is **auto-downloaded + SHA-256 verified** on first run (Handy CDN artifacts).
+- **Folder watcher** (FSEvents / inotify) feeds its own sequential worker, so watched
+  files never compete for the async job queue that API clients poll.
+
+### Data home — `~/.ras`
+
+Everything the server keeps between runs lives in one directory (override with
+`RAS_HOME`, disable persistence entirely with `ASR_NO_HISTORY=1`):
+
+```
+~/.ras/
+├── models/                     model cache (unless MODELS_DIR is set)
+├── transcripts/
+│   ├── <uuid>.json             full record: metadata + text + segments
+│   └── <uuid>.txt              plain text (what a notification copies)
+├── audio/<uuid>-<name>         the original audio, byte-for-byte
+└── watcher_state.json          per-file (size, mtime) so nothing is transcribed twice
+```
+
+One file per record, no index: nothing to corrupt or lock, `cat`-readable, and
+prunable with `rm`. Writes are atomic (temp file + rename), so a concurrent
+`/v1/history` read never sees a half-written record. Successful API transcriptions
+and every watched file are saved; failed API calls are not (they answer over HTTP),
+while failed watched files are (the UI is their only feedback channel). The SSE
+streaming endpoint never persists — it never assembles a final transcript.
+
+An existing `./models/<model>` directory is still used when present, so upgrading
+from an earlier version does not orphan an already-downloaded model. In Docker the
+model cache is `/models` (a volume) and the data home falls back to `/root/.ras`
+inside the container — set `RAS_HOME` to a mounted path if you want the saved
+transcripts to survive `docker compose down`.
 
 ### Layout
 
 ```
 src/
-├── main.rs        # app wiring, router, config
+├── main.rs        # app wiring, router, config, CLI flags
 ├── engine.rs      # ParakeetModel actor thread
 ├── audio.rs       # ffmpeg decode + chunking
 ├── pipeline.rs    # decode → chunk → engine → assemble
-├── transcript.rs  # output type + segment assembly
-├── routes.rs      # handlers (transcribe / stream / async / health / metrics)
+├── transcript.rs  # output type + segment assembly + srt/vtt rendering
+├── routes.rs      # handlers (transcribe / stream / async / history / watcher / ops)
 ├── jobs.rs        # async job queue + worker
+├── watcher.rs     # folder watcher + desktop notifications
+├── history.rs     # persistent transcript store (~/.ras)
+├── ras.rs         # data-home resolution + atomic writes
 ├── model.rs       # download + extract + verify
 ├── metrics.rs     # counters
 ├── state.rs       # shared AppState
