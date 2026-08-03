@@ -7,6 +7,7 @@
 //! turn `/metrics`, `/async`, or `/jobs/{id}` into permanent failures.
 
 use crate::engine::EngineHandle;
+use crate::history::{HistoryRecord, HistoryStore, SOURCE_API_ASYNC};
 use crate::metrics::Metrics;
 use crate::pipeline;
 use crate::transcript::TranscriptOutput;
@@ -47,6 +48,8 @@ type JobStore = Arc<Mutex<HashMap<String, Job>>>;
 
 struct JobRequest {
     job_id: String,
+    /// Upload filename, used as the history record's name.
+    name: String,
     audio_bytes: Vec<u8>,
 }
 
@@ -58,7 +61,12 @@ pub struct JobQueue {
 }
 
 impl JobQueue {
-    pub fn start(engine: EngineHandle, metrics: Arc<Metrics>, ffmpeg_bin: PathBuf) -> Self {
+    pub fn start(
+        engine: EngineHandle,
+        metrics: Arc<Metrics>,
+        ffmpeg_bin: PathBuf,
+        history: Arc<HistoryStore>,
+    ) -> Self {
         let (tx, mut rx) = mpsc::channel::<JobRequest>(128);
         let store: JobStore = Arc::new(Mutex::new(HashMap::new()));
 
@@ -67,8 +75,22 @@ impl JobQueue {
             while let Some(req) = rx.recv().await {
                 set_status(&worker_store, &req.job_id, JobStatus::Processing);
                 let started = Instant::now();
-                let outcome = process(&engine, &ffmpeg_bin, req.audio_bytes).await;
+                let outcome = process(&engine, &ffmpeg_bin, &req.audio_bytes).await;
                 metrics.record(started.elapsed().as_millis() as u64);
+
+                // Only successful transcriptions are persisted: a failed API call
+                // reports back over HTTP, so saving it would just litter the UI.
+                if let Ok(out) = &outcome {
+                    let record = HistoryRecord::done(&req.name, SOURCE_API_ASYNC, out);
+                    let history = history.clone();
+                    let bytes = req.audio_bytes;
+                    if let Err(e) =
+                        tokio::task::spawn_blocking(move || history.save(record, Some(&bytes)))
+                            .await
+                    {
+                        tracing::warn!("history: save task failed: {e}");
+                    }
+                }
 
                 let mut guard = worker_store.lock();
                 if let Some(job) = guard.get_mut(&req.job_id) {
@@ -90,7 +112,8 @@ impl JobQueue {
     }
 
     /// Enqueue audio for async transcription; returns the new job id.
-    pub async fn submit(&self, audio_bytes: Vec<u8>) -> String {
+    /// `name` is the upload filename (used for the history record).
+    pub async fn submit(&self, audio_bytes: Vec<u8>, name: Option<String>) -> String {
         let job_id = uuid::Uuid::new_v4().to_string();
         {
             let mut guard = self.store.lock();
@@ -111,6 +134,7 @@ impl JobQueue {
             .tx
             .send(JobRequest {
                 job_id: job_id.clone(),
+                name: name.unwrap_or_else(|| "upload".to_string()),
                 audio_bytes,
             })
             .await
@@ -141,7 +165,7 @@ impl JobQueue {
 async fn process(
     engine: &EngineHandle,
     ffmpeg_bin: &Path,
-    bytes: Vec<u8>,
+    bytes: &[u8],
 ) -> anyhow::Result<TranscriptOutput> {
     let samples = crate::audio::decode_to_pcm(ffmpeg_bin, bytes).await?;
     pipeline::transcribe_samples(engine, samples, pipeline::CHUNK_SECS).await

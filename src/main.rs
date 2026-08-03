@@ -3,14 +3,17 @@ mod docs;
 mod engine;
 mod error;
 mod ffmpeg;
+mod history;
 mod jobs;
 mod metrics;
 mod model;
 mod pipeline;
+mod ras;
 mod routes;
 mod state;
 mod transcript;
 mod update;
+mod watcher;
 
 use anyhow::Result;
 use axum::{
@@ -20,7 +23,7 @@ use axum::{
 };
 use state::AppState;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -31,8 +34,9 @@ const MAX_UPLOAD_BYTES: usize = 512 * 1024 * 1024; // 512 MB
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut args = std::env::args().skip(1);
-    match args.next().as_deref() {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    // Everything after the (optional) `serve` subcommand is a serve flag.
+    let serve_args: &[String] = match argv.first().map(String::as_str) {
         Some("update") => return update::run().await,
         Some("version") | Some("--version") | Some("-V") => {
             println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
@@ -42,13 +46,16 @@ async fn main() -> Result<()> {
             print_help();
             return Ok(());
         }
-        None | Some("serve") => {}
+        Some("serve") => &argv[1..],
+        None => &[],
+        // `serve` is the default, so flags may be given without naming it.
+        Some(flag) if flag.starts_with('-') => &argv[..],
         Some(other) => {
             eprintln!("unknown command: {other}\n");
             print_help();
             std::process::exit(2);
         }
-    }
+    };
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -57,8 +64,22 @@ async fn main() -> Result<()> {
         )
         .init();
 
+    let watch_cfg = match watcher::WatchConfig::parse(serve_args) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("{e}\n");
+            print_help();
+            std::process::exit(2);
+        }
+    };
+
     let model_id = std::env::var("ASR_MODEL").unwrap_or_else(|_| "parakeet-tdt-0.6b-v3".into());
-    let models_dir = PathBuf::from(std::env::var("MODELS_DIR").unwrap_or_else(|_| "models".into()));
+    let ras_home = ras::home();
+    if let Err(e) = std::fs::create_dir_all(&ras_home) {
+        tracing::warn!("cannot create data home {}: {e}", ras_home.display());
+    }
+    tracing::info!("data home: {}", ras_home.display());
+    let models_dir = resolve_models_dir(&ras_home, &model_id);
     let port: u16 = std::env::var("PORT")
         .ok()
         .and_then(|p| p.parse().ok())
@@ -82,7 +103,24 @@ async fn main() -> Result<()> {
     }
 
     let metrics = Arc::new(metrics::Metrics::default());
-    let jobs = jobs::JobQueue::start(engine.clone(), metrics.clone(), ffmpeg.bin.clone());
+    let history = Arc::new(history::HistoryStore::new(&ras_home));
+    let jobs = jobs::JobQueue::start(
+        engine.clone(),
+        metrics.clone(),
+        ffmpeg.bin.clone(),
+        history.clone(),
+    );
+
+    if !watch_cfg.dirs.is_empty() && !ffmpeg.available {
+        tracing::warn!("watcher: ffmpeg is missing — watched files will fail to decode");
+    }
+    let watcher = watcher::start(
+        watch_cfg,
+        engine.clone(),
+        history.clone(),
+        ffmpeg.bin.clone(),
+        &ras_home,
+    );
 
     let state = AppState {
         engine,
@@ -91,6 +129,8 @@ async fn main() -> Result<()> {
         ffmpeg,
         model_id,
         device,
+        history,
+        watcher,
     };
 
     let app = Router::new()
@@ -109,6 +149,14 @@ async fn main() -> Result<()> {
             post(routes::transcriptions_async),
         )
         .route("/v1/audio/jobs/:job_id", get(routes::job_status))
+        .route("/v1/history", get(routes::history_list))
+        .route(
+            "/v1/history/:id",
+            get(routes::history_get).delete(routes::history_delete),
+        )
+        .route("/v1/history/:id/audio", get(routes::history_audio))
+        .route("/v1/history/:id/download", get(routes::history_download))
+        .route("/v1/watcher", get(routes::watcher_status))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
@@ -131,15 +179,53 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Where to keep (and look for) the model bundle:
+///
+/// 1. `MODELS_DIR` when set — Docker mounts a volume at `/models`.
+/// 2. `./models/<model>` when it already exists — don't orphan an existing
+///    install by silently switching to the data home.
+/// 3. `$RAS_HOME/models` — the default, shared across working directories.
+fn resolve_models_dir(ras_home: &Path, model_id: &str) -> PathBuf {
+    if let Some(raw) = std::env::var_os("MODELS_DIR") {
+        if !raw.is_empty() {
+            return PathBuf::from(raw);
+        }
+    }
+    let ras_models = ras::models_dir(ras_home);
+    let legacy = PathBuf::from("models");
+    let legacy_has_model = model::dir_name(model_id)
+        .map(|name| legacy.join(name).is_dir())
+        .unwrap_or(false);
+    if legacy_has_model {
+        tracing::info!(
+            "using the model in ./models (legacy layout) — move it to {} to share one \
+             cache across working directories",
+            ras_models.display()
+        );
+        return legacy;
+    }
+    ras_models
+}
+
 fn print_help() {
     println!(
         "parakeet-local-asr-rust {} — OpenAI-compatible Parakeet ASR server\n\n\
 USAGE:\n  \
-parakeet-local-asr-rust [serve]   start the server (default)\n  \
-parakeet-local-asr-rust update    update to the latest release (checksum-verified)\n  \
-parakeet-local-asr-rust version   print the version\n  \
-parakeet-local-asr-rust help      show this help\n\n\
-ENV: PORT (8090) · ASR_MODEL · MODELS_DIR · ASR_DEVICE · FFMPEG_PATH · RUST_LOG",
+parakeet-local-asr-rust [serve] [OPTIONS]   start the server (default)\n  \
+parakeet-local-asr-rust update              update to the latest release (checksum-verified)\n  \
+parakeet-local-asr-rust version             print the version\n  \
+parakeet-local-asr-rust help                show this help\n\n\
+SERVE OPTIONS:\n  \
+--watch <dir>       transcribe audio files that appear in <dir> (repeatable)\n  \
+--watch-ext <ext>   extensions the watcher picks up, default .ogg (repeatable)\n  \
+--no-notify         do not send desktop notifications for watched files\n\n\
+EXAMPLE:\n  \
+parakeet-local-asr-rust serve --watch ~/Downloads --watch-ext .ogg\n\n\
+ENV:\n  \
+PORT (8090) · ASR_MODEL · MODELS_DIR · ASR_DEVICE · FFMPEG_PATH · RUST_LOG\n  \
+RAS_HOME (~/.ras) — transcripts, audio and model cache live here\n  \
+ASR_WATCH_DIRS · ASR_WATCH_EXTS (comma-separated) · ASR_NO_NOTIFY\n  \
+ASR_NO_HISTORY — do not persist transcripts · ASR_NO_OPEN — do not open the browser",
         env!("CARGO_PKG_VERSION")
     );
 }

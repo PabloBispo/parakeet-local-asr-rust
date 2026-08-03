@@ -41,6 +41,12 @@ fn spec(model_id: &str) -> Result<ModelSpec> {
     }
 }
 
+/// Directory name a model extracts into, e.g. `parakeet-tdt-0.6b-v3-int8`.
+/// `None` for an unknown id. Used to detect an existing legacy `./models` install.
+pub fn dir_name(model_id: &str) -> Option<&'static str> {
+    spec(model_id).ok().map(|s| s.dir_name)
+}
+
 /// Ensure the model is present under `models_dir`, downloading + extracting if absent.
 /// Returns the path to the model directory ready for `ParakeetModel::load`.
 pub async fn ensure_model(models_dir: &Path, model_id: &str) -> Result<PathBuf> {

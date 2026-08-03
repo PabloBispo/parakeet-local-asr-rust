@@ -1,3 +1,6 @@
 /target
 /models
 *.tar.gz
+# Data home when it lands next to the binary (no HOME available)
+/.ras
+.claude/

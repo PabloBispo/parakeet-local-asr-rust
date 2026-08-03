@@ -8,15 +8,16 @@ use tokio::process::Command;
 pub const SAMPLE_RATE: usize = 16_000;
 
 /// Decode arbitrary audio bytes (wav/mp3/m4a/ogg/opus/flac/...) to 16 kHz mono f32
-/// by shelling out to ffmpeg (`ffmpeg_bin`). Takes ownership of `input`.
+/// by shelling out to ffmpeg (`ffmpeg_bin`). Borrows `input` so callers that also
+/// archive the original bytes (history persistence) don't need a second copy.
 ///
 /// The input is written to a temp file instead of being piped via stdin:
 /// seekable containers (MP4/m4a) keep their index (`moov` atom) at the END of the
 /// file, which ffmpeg cannot reach over a non-seekable pipe — piping silently
 /// yields empty output. A real file path decodes every format reliably.
-pub async fn decode_to_pcm(ffmpeg_bin: &Path, input: Vec<u8>) -> Result<Vec<f32>> {
+pub async fn decode_to_pcm(ffmpeg_bin: &Path, input: &[u8]) -> Result<Vec<f32>> {
     let tmp = std::env::temp_dir().join(format!("parakeet-asr-{}", uuid::Uuid::new_v4()));
-    tokio::fs::write(&tmp, &input)
+    tokio::fs::write(&tmp, input)
         .await
         .map_err(|e| anyhow!("failed to write temp input file: {e}"))?;
 

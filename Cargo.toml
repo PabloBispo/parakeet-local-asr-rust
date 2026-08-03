@@ -1,6 +1,6 @@
 [package]
 name = "parakeet-local-asr-rust"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2021"
 description = "OpenAI-compatible Parakeet ASR server (Rust + transcribe-rs / ONNX Runtime)"
 
@@ -52,6 +52,16 @@ open = "5"
 
 # Render the bundled docs (markdown -> HTML) served at /docs
 pulldown-cmark = "0.12"
+
+# Folder watcher (FSEvents / inotify / ReadDirectoryChangesW). Pure Rust, builds
+# on every target in the release matrix — no C deps to cross-compile.
+notify = "8"
+
+# Locate the user's home dir for $RAS_HOME (~/.ras) and `~` expansion.
+dirs = "6"
+
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
 opt-level = 3
