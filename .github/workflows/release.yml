@@ -21,10 +21,38 @@ on:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Unit tests — gate the whole release on them (one runner is enough: the
+  # tested code is platform-independent; the matrix below proves it compiles
+  # everywhere).
+  # ---------------------------------------------------------------------------
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          rustflags: ""
+          cache: false
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-x86_64-unknown-linux-gnu
+
+      - name: Run tests
+        run: cargo test --locked
+
+  # ---------------------------------------------------------------------------
   # Build matrix — one native job per target
   # ---------------------------------------------------------------------------
   build:
     name: Build · ${{ matrix.target }}
+    needs: test
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
