@@ -626,6 +626,9 @@ mod notify_shell {
     pub fn pipe_stdin(bin: &str, args: &[&str], data: &[u8]) {
         let child = Command::new(bin)
             .args(args)
+            // Without a UTF-8 locale pbcopy decodes stdin as Mac Roman; harmless
+            // for byte-transparent tools like xclip.
+            .env("LC_CTYPE", "UTF-8")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -662,7 +665,13 @@ fn notify_macos(title: &str, body: &str, copy_from: Option<&Path>) {
         let mut cmd = Command::new(bin);
         cmd.args(["-title", title, "-message", body]);
         if let Some(path) = copy_from {
-            cmd.args(["-execute", &format!("cat {} | pbcopy", shell_quote(path))]);
+            // The click action runs in terminal-notifier's launchd context, which
+            // has no locale set — pbcopy then decodes stdin as Mac Roman and
+            // mangles UTF-8 ("ã" becomes "√£"). Force UTF-8 on pbcopy itself.
+            cmd.args([
+                "-execute",
+                &format!("cat {} | LC_CTYPE=UTF-8 pbcopy", shell_quote(path)),
+            ]);
         }
         if run(&mut cmd) {
             return;
