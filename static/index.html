@@ -286,6 +286,53 @@
     border-style: dashed;
     border-color: var(--border);
   }
+
+  /* ── watcher panel ── */
+  #watcher-panel {
+    display: none;
+    background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--ok);
+    border-radius: 4px; padding: 10px 14px; margin-bottom: 18px;
+    align-items: center; gap: 10px; flex-wrap: wrap;
+    font: 500 12px var(--mono); color: var(--muted);
+  }
+  #watcher-panel.visible { display: flex; }
+  #watcher-panel .wp-dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--ok);
+    box-shadow: 0 0 6px var(--ok); flex-shrink: 0; animation: pulse 1.4s ease-in-out infinite;
+  }
+  #watcher-panel .wp-label { color: var(--fg); font-weight: 600; }
+  #watcher-panel .wp-dirs { color: var(--sand); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #watcher-panel .wp-exts { color: var(--muted2); }
+  #watcher-panel .wp-sep { color: var(--border2); }
+  #watcher-panel .wp-last { color: var(--muted); }
+  #watcher-hint {
+    display: none;
+    margin-bottom: 18px; color: var(--muted2); font: 500 12px var(--mono);
+  }
+  #watcher-hint.visible { display: block; }
+  #watcher-hint code {
+    background: var(--panel2); border: 1px solid var(--border2); border-radius: 3px;
+    padding: 2px 6px; color: var(--sand);
+  }
+
+  /* ── section headings ── */
+  .section-head { margin: 26px 0 10px; display: flex; align-items: center; gap: 10px; }
+  .section-head h2 {
+    font: 600 12px var(--mono); color: var(--muted); text-transform: uppercase;
+    letter-spacing: .07em; margin: 0;
+  }
+  .section-head .shcount { font: 500 11px var(--mono); color: var(--muted2); }
+  .section-head .spacer { flex: 1; }
+
+  /* ── server history ── */
+  #hist-section { display: none; }
+  #hist-section.visible { display: block; }
+  .badge.auto { background: rgba(222,165,132,.15); color: var(--sand); }
+  .badge.api { background: rgba(160,140,125,.14); color: var(--muted); }
+  .hist-preview {
+    color: var(--muted); font-size: 13px; line-height: 1.5;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  }
 </style>
 </head>
 <body>
@@ -312,6 +359,19 @@
     </div>
   </div>
 
+  <div id="watcher-panel">
+    <span class="wp-dot"></span>
+    <span class="wp-label">watching</span>
+    <span class="wp-dirs" id="wp-dirs"></span>
+    <span class="wp-sep">·</span>
+    <span class="wp-exts" id="wp-exts"></span>
+    <span class="wp-sep">·</span>
+    <span class="wp-progress" id="wp-progress"></span>
+    <span class="wp-sep" id="wp-last-sep" style="display:none">·</span>
+    <span class="wp-last" id="wp-last"></span>
+  </div>
+  <div id="watcher-hint">folder watcher off — start with: <code>parakeet-local-asr-rust serve --watch ~/Downloads</code></div>
+
   <div id="drop" class="drop" role="button" tabindex="0" aria-label="Upload audio">
     <div class="ico">🎙</div>
     <div class="big">Drop audio here or click to choose</div>
@@ -320,6 +380,7 @@
     <input id="file" type="file" accept="audio/*,.wav,.mp3,.m4a,.ogg,.opus,.flac,.webm" multiple hidden />
   </div>
 
+  <div class="section-head"><h2>This browser</h2></div>
   <div class="controls">
     <div class="search">
       <span class="mag">🔍</span>
@@ -333,6 +394,16 @@
   </div>
 
   <div id="list" class="list"></div>
+
+  <div id="hist-section">
+    <div class="section-head">
+      <h2>History (server)</h2>
+      <span class="shcount" id="hist-shcount"></span>
+      <span class="spacer"></span>
+      <button class="btn" id="hist-refresh-btn">↻ refresh</button>
+    </div>
+    <div id="hist-list" class="list"></div>
+  </div>
 </main>
 
 <div id="toasts"></div>
@@ -352,6 +423,24 @@ function fmtDurSec(s){ if(s==null||isNaN(s)) return "—"; const m=Math.floor(s/
 function fmtTotalDur(sec){ if(sec==null||isNaN(sec)) return "—"; const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=Math.round(sec%60); if(h>0) return h+"h "+m+"m"; if(m>0) return m+"m "+s+"s"; return s+"s"; }
 function fmtDate(ms){ if(!ms) return "—"; try{ return new Date(ms).toLocaleString(undefined,{dateStyle:"short",timeStyle:"short"}); }catch{ return "—"; } }
 function fmtHHMM(ms){ if(!ms) return "—"; try{ return new Date(ms).toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}); }catch{ return "—"; } }
+function relTime(ms){
+  if(!ms) return "—";
+  const diff = Date.now() - ms;
+  if(diff < 1000) return "just now";
+  const s = Math.floor(diff/1000);
+  if(s < 60) return s+"s ago";
+  const m = Math.floor(s/60);
+  if(m < 60) return m+"min ago";
+  const h = Math.floor(m/60);
+  if(h < 24) return h+"h ago";
+  const d = Math.floor(h/24);
+  return d+"d ago";
+}
+function truncMiddle(s, max){
+  if(!s || s.length<=max) return s;
+  const half = Math.floor((max-1)/2);
+  return s.slice(0, half) + "…" + s.slice(s.length-half);
+}
 
 /* ============================================================
    WHATSAPP FILENAME PARSER  (mirror whatsapp.py _WA_RE)
@@ -500,6 +589,7 @@ async function transcribeOne(rec){
   await dbPut(rec).catch(()=>{});
   render();
   refreshStats();
+  if(rec.status === "done") refreshHistory();
 }
 
 function retranscribe(id){
@@ -844,6 +934,163 @@ async function refreshStats(){
 }
 
 /* ============================================================
+   FOLDER WATCHER PANEL
+   ============================================================ */
+let lastFilesProcessed = null;
+
+function renderWatcher(w){
+  const panel = $("#watcher-panel"), hint = $("#watcher-hint");
+  if(!w || !w.enabled){
+    panel.classList.remove("visible");
+    hint.classList.add("visible");
+    return;
+  }
+  hint.classList.remove("visible");
+  panel.classList.add("visible");
+  const dirs = (w.dirs || []).join(", ");
+  const dirsEl = $("#wp-dirs");
+  dirsEl.textContent = truncMiddle(dirs, 44);
+  dirsEl.title = dirs;
+  $("#wp-exts").textContent = (w.exts || []).join(" ");
+  $("#wp-progress").textContent = (w.files_processed||0) + "/" + (w.files_seen||0) + " processed";
+  const lastSep = $("#wp-last-sep"), last = $("#wp-last");
+  if(w.last_file){
+    lastSep.style.display = "";
+    last.textContent = w.last_file.name + " · " + relTime(w.last_file.at_ms);
+  } else {
+    lastSep.style.display = "none";
+    last.textContent = "";
+  }
+}
+
+async function refreshWatcher(){
+  try {
+    const r = await fetch("/v1/watcher");
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const w = await r.json();
+    renderWatcher(w);
+    // watcher processed a new file since last poll -> pull fresh server history
+    if(lastFilesProcessed != null && w.files_processed > lastFilesProcessed) refreshHistory();
+    lastFilesProcessed = w.files_processed;
+  } catch {
+    // old server without watcher support (or transient failure) -> hide panel entirely
+    $("#watcher-panel").classList.remove("visible");
+    $("#watcher-hint").classList.remove("visible");
+  }
+}
+
+/* ============================================================
+   SERVER HISTORY (~/.ras) — separate from the browser's IndexedDB list
+   ============================================================ */
+let historyItems = [];
+
+function histBadgeSource(source){
+  if(source === "watcher") return '<span class="badge auto">auto</span>';
+  return '<span class="badge api">'+esc(source || "api")+'</span>';
+}
+function histBadgeStatus(status){
+  if(status === "done") return '<span class="badge done">✓ done</span>';
+  if(status === "failed") return '<span class="badge error">✕ failed</span>';
+  return '<span class="badge pending">'+esc(status || "?")+'</span>';
+}
+function histCardHTML(item){
+  const dur = item.duration!=null ? fmtDurSec(item.duration) : null;
+  const text = (item.text || "").trim();
+  const hasAudio = !!item.audio_file;
+  let body;
+  if(item.status === "failed"){
+    body = '<div class="err-tr">⚠ '+esc(item.error || "Transcription failed")+'</div>';
+  } else if(text){
+    body = '<div class="hist-preview">'+esc(text)+'</div>';
+  } else {
+    body = '<div class="empty-tr">(empty transcript)</div>';
+  }
+  let acts = '<button class="btn" data-hplay="'+esc(item.id)+'"'+(hasAudio?"":" disabled")+'>▶ play</button>';
+  acts += '<button class="btn" data-hcopy="'+esc(item.id)+'">⧉ copy</button>';
+  acts += '<button class="btn" data-hdl="'+esc(item.id)+'" data-fmt="txt">↓ txt</button>';
+  acts += '<button class="btn" data-hdl="'+esc(item.id)+'" data-fmt="srt">↓ srt</button>';
+  acts += '<button class="btn" data-hdl="'+esc(item.id)+'" data-fmt="vtt">↓ vtt</button>';
+  acts += '<button class="btn danger" data-hdel="'+esc(item.id)+'">🗑 delete</button>';
+  return '<div class="card st-'+(item.status==="failed"?"error":"done")+' compact">' +
+    '<div class="chead"><span class="fname" title="'+esc(item.name)+'">'+esc(item.name)+'</span>'+histBadgeStatus(item.status)+histBadgeSource(item.source)+'</div>' +
+    '<div class="cmeta">' +
+      (dur?'<span>⏱ '+dur+'</span>':'') +
+      '<span>'+fmtDate(item.created_at_ms)+'</span>' +
+    '</div>' +
+    '<div class="caudio" id="hist-audio-'+esc(item.id)+'"></div>' +
+    '<div class="cbody">'+body+'</div>' +
+    '<div class="actions">'+acts+'</div>' +
+  '</div>';
+}
+function renderHistory(){
+  $("#hist-shcount").textContent = historyItems.length ? historyItems.length+" recording"+(historyItems.length!==1?"s":"") : "";
+  const list = $("#hist-list");
+  if(!historyItems.length){
+    list.innerHTML = '<div class="empty-tr">no server history yet</div>';
+    return;
+  }
+  list.innerHTML = historyItems.map(histCardHTML).join("");
+}
+async function refreshHistory(){
+  try {
+    const r = await fetch("/v1/history?limit=100");
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const j = await r.json();
+    historyItems = Array.isArray(j.items) ? j.items : [];
+    $("#hist-section").classList.add("visible");
+    renderHistory();
+  } catch {
+    // old server without history support (or transient failure) -> hide section entirely
+    $("#hist-section").classList.remove("visible");
+  }
+}
+function histPlay(id){
+  const container = document.getElementById("hist-audio-"+CSS.escape(id));
+  if(!container || container.querySelector("audio")) return;
+  const audio = document.createElement("audio");
+  audio.controls = true;
+  audio.preload = "none";
+  audio.src = "/v1/history/"+encodeURIComponent(id)+"/audio";
+  container.appendChild(audio);
+  audio.play().catch(()=>{});
+}
+async function histCopy(id){
+  const item = historyItems.find(i => i.id === id);
+  const t = ((item && item.text) || "").trim();
+  if(!t){ toast("No text to copy.", "err"); return; }
+  try { await navigator.clipboard.writeText(t); toast("Transcript copied!", "ok"); }
+  catch { toast("Copy failed (no permission?)", "err"); }
+}
+function histDownload(id, fmt){
+  const a = document.createElement("a");
+  a.href = "/v1/history/"+encodeURIComponent(id)+"/download?format="+encodeURIComponent(fmt);
+  a.rel = "noopener";
+  document.body.appendChild(a); a.click(); a.remove();
+}
+async function histDelete(id){
+  if(!confirm("Delete this recording permanently?")) return;
+  try {
+    const r = await fetch("/v1/history/"+encodeURIComponent(id), { method: "DELETE" });
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    historyItems = historyItems.filter(i => i.id !== id);
+    renderHistory();
+    toast("Recording deleted.", "ok");
+  } catch(e){
+    toast("Delete failed: "+(e.message||e), "err");
+  }
+}
+
+$("#hist-list").addEventListener("click", e => {
+  const t = e.target.closest("[data-hplay],[data-hcopy],[data-hdl],[data-hdel]");
+  if(!t) return;
+  if(t.dataset.hplay!=null) return histPlay(t.dataset.hplay);
+  if(t.dataset.hcopy!=null) return histCopy(t.dataset.hcopy);
+  if(t.dataset.hdl!=null) return histDownload(t.dataset.hdl, t.dataset.fmt);
+  if(t.dataset.hdel!=null) return histDelete(t.dataset.hdel);
+});
+$("#hist-refresh-btn").addEventListener("click", () => refreshHistory());
+
+/* ============================================================
    INIT
    ============================================================ */
 async function init(){
@@ -859,9 +1106,12 @@ async function init(){
   render();
   refreshHealth();
   refreshStats();
+  refreshWatcher();
+  refreshHistory();
   runQueue();
   setInterval(refreshHealth, 15000);
   setInterval(refreshStats, 8000);
+  setInterval(refreshWatcher, 5000);
 }
 init();
 </script>
