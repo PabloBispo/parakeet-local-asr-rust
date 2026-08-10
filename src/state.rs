@@ -3,7 +3,7 @@ use crate::ffmpeg::Ffmpeg;
 use crate::history::HistoryStore;
 use crate::jobs::JobQueue;
 use crate::metrics::Metrics;
-use crate::watcher::WatcherStatus;
+use crate::watcher::WatcherHandle;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -16,6 +16,7 @@ pub struct AppState {
     pub device: String,
     /// Persistent transcript history under `$RAS_HOME`.
     pub history: Arc<HistoryStore>,
-    /// Live folder-watcher counters (disabled placeholder when not watching).
-    pub watcher: Arc<WatcherStatus>,
+    /// Folder-watcher status + runtime configuration (add/remove folders, set
+    /// extensions). Reports `enabled: false` while nothing is being watched.
+    pub watcher: WatcherHandle,
 }

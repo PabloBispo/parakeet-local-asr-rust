@@ -8,6 +8,7 @@
 //! ├── models/               model cache (unless MODELS_DIR overrides it)
 //! ├── transcripts/          <uuid>.json + <uuid>.txt per transcription
 //! ├── audio/                <uuid>-<name> — the original audio, verbatim
+//! ├── watcher_config.json   folder-watcher config (folders + extensions)
 //! └── watcher_state.json    folder-watcher dedup state
 //! ```
 //!
@@ -52,6 +53,11 @@ pub fn audio_dir(ras_home: &Path) -> PathBuf {
 
 pub fn watcher_state_path(ras_home: &Path) -> PathBuf {
     ras_home.join("watcher_state.json")
+}
+
+/// Watched folders and extensions, as configured at runtime from the UI/API.
+pub fn watcher_config_path(ras_home: &Path) -> PathBuf {
+    ras_home.join("watcher_config.json")
 }
 
 /// Expand a leading `~` in a user-supplied path. Shells do this for us on the
@@ -155,6 +161,10 @@ mod tests {
         assert_eq!(
             watcher_state_path(&h),
             PathBuf::from("/data/.ras/watcher_state.json")
+        );
+        assert_eq!(
+            watcher_config_path(&h),
+            PathBuf::from("/data/.ras/watcher_config.json")
         );
     }
 }

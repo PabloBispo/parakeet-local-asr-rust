@@ -18,7 +18,7 @@ mod watcher;
 use anyhow::Result;
 use axum::{
     extract::DefaultBodyLimit,
-    routing::{get, post},
+    routing::{get, post, put},
     Router,
 };
 use state::AppState;
@@ -111,9 +111,9 @@ async fn main() -> Result<()> {
         history.clone(),
     );
 
-    if !watch_cfg.dirs.is_empty() && !ffmpeg.available {
-        tracing::warn!("watcher: ffmpeg is missing — watched files will fail to decode");
-    }
+    // After `start`: the watched folders are the merge of these flags with the
+    // config persisted under $RAS_HOME, so only the watcher itself knows whether
+    // anything is actually being watched.
     let watcher = watcher::start(
         watch_cfg,
         engine.clone(),
@@ -121,6 +121,9 @@ async fn main() -> Result<()> {
         ffmpeg.bin.clone(),
         &ras_home,
     );
+    if watcher.is_enabled() && !ffmpeg.available {
+        tracing::warn!("watcher: ffmpeg is missing — watched files will fail to decode");
+    }
 
     let state = AppState {
         engine,
@@ -157,6 +160,13 @@ async fn main() -> Result<()> {
         .route("/v1/history/:id/audio", get(routes::history_audio))
         .route("/v1/history/:id/download", get(routes::history_download))
         .route("/v1/watcher", get(routes::watcher_status))
+        // Runtime watcher configuration. Guarded against cross-site calls inside the
+        // handlers (see routes::reject_foreign_origin) — CORS is permissive here.
+        .route(
+            "/v1/watcher/dirs",
+            post(routes::watcher_add_dir).delete(routes::watcher_remove_dir),
+        )
+        .route("/v1/watcher/exts", put(routes::watcher_set_exts))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
@@ -219,6 +229,9 @@ SERVE OPTIONS:\n  \
 --watch <dir>       transcribe audio files that appear in <dir> (repeatable)\n  \
 --watch-ext <ext>   extensions the watcher picks up, default .ogg (repeatable)\n  \
 --no-notify         do not send desktop notifications for watched files\n\n\
+Folders and extensions are also configurable at runtime from the UI (or via\n\
+POST/DELETE /v1/watcher/dirs and PUT /v1/watcher/exts) and are remembered in\n\
+$RAS_HOME/watcher_config.json — the flags above are merged into it on startup.\n\n\
 EXAMPLE:\n  \
 parakeet-local-asr-rust serve --watch ~/Downloads --watch-ext .ogg\n\n\
 ENV:\n  \

@@ -7,7 +7,7 @@ use crate::{audio, error::AppError, state::AppState};
 use anyhow::anyhow;
 use axum::{
     extract::{Multipart, Path, Query, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{
         sse::{Event, Sse},
         IntoResponse, Response,
@@ -275,6 +275,9 @@ pub async fn index(State(st): State<AppState>) -> Response {
             "GET /v1/history/{id}/download",
             "DELETE /v1/history/{id}",
             "GET /v1/watcher",
+            "POST /v1/watcher/dirs",
+            "DELETE /v1/watcher/dirs",
+            "PUT /v1/watcher/exts",
             "GET /health",
             "GET /metrics"
         ]
@@ -431,7 +434,165 @@ pub async fn history_delete(State(st): State<AppState>, Path(id): Path<String>) 
     Json(json!({ "deleted": st.history.delete(&id) })).into_response()
 }
 
-/// `GET /v1/watcher` → folder-watcher status and counters.
+// ── folder watcher (/v1/watcher) ──────────────────────────────────────────────
+
+/// `GET /v1/watcher` → folder-watcher status, configuration and counters.
 pub async fn watcher_status(State(st): State<AppState>) -> Response {
     Json(st.watcher.snapshot()).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct WatchDirBody {
+    path: String,
+}
+
+#[derive(Deserialize)]
+pub struct WatchExtsBody {
+    exts: Vec<String>,
+}
+
+/// `POST /v1/watcher/dirs` `{"path": "~/Downloads"}` → the new snapshot.
+pub async fn watcher_add_dir(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<WatchDirBody>,
+) -> Response {
+    if let Some(denied) = reject_foreign_origin(&headers) {
+        return denied;
+    }
+    watcher_result(st.watcher.add_dir(&body.path).await)
+}
+
+/// `DELETE /v1/watcher/dirs` `{"path": "/Users/me/Downloads"}` → the new snapshot.
+/// The path travels in the body (not the URL) because it is an absolute filesystem
+/// path — percent-encoding one into a path segment is a portability minefield.
+pub async fn watcher_remove_dir(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<WatchDirBody>,
+) -> Response {
+    if let Some(denied) = reject_foreign_origin(&headers) {
+        return denied;
+    }
+    watcher_result(st.watcher.remove_dir(&body.path).await)
+}
+
+/// `PUT /v1/watcher/exts` `{"exts": [".ogg", "m4a"]}` → the new snapshot.
+/// Replaces the whole list (PUT, not PATCH).
+pub async fn watcher_set_exts(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<WatchExtsBody>,
+) -> Response {
+    if let Some(denied) = reject_foreign_origin(&headers) {
+        return denied;
+    }
+    watcher_result(st.watcher.set_exts(body.exts).await)
+}
+
+/// Every mutating watcher endpoint answers with the exact body of `GET /v1/watcher`
+/// on success, so the UI can re-render from one response shape.
+fn watcher_result(result: Result<crate::watcher::WatcherSnapshot, String>) -> Response {
+    match result {
+        Ok(snapshot) => Json(snapshot).into_response(),
+        // 400: every error here is bad input (missing folder, empty extension list),
+        // and the message is already user-facing pt-BR.
+        Err(message) => (StatusCode::BAD_REQUEST, Json(json!({ "error": message }))).into_response(),
+    }
+}
+
+/// Same-origin guard for the watcher config endpoints.
+///
+/// The server binds `0.0.0.0` with `CorsLayer::permissive()`, which is deliberate:
+/// the browser extension and any local tool must be able to POST audio to
+/// `/v1/audio/*` from any page. That is safe for endpoints that only process bytes
+/// the caller already had.
+///
+/// The watcher config endpoints are not in that class. They tell the server which
+/// folders on *this machine* to read, and every audio file found there is
+/// transcribed and copied into `$RAS_HOME` — where the same permissive CORS lets it
+/// be read back via `/v1/history`. Unguarded, any page the user happens to visit
+/// could `POST {"path":"~/Documents"}` and exfiltrate their files.
+///
+/// So: no `Origin` header (curl, the CLI, any non-browser client) is accepted, and
+/// a browser `Origin` is accepted only on a loopback host. **Any loopback port is
+/// allowed** — a frontend dev server on `:3000` calling the API on `:8090` is a
+/// legitimate setup, and a remote attacker cannot forge `Origin` in a browser
+/// anyway. Applies to the three mutating endpoints only; the GETs and `/v1/audio/*`
+/// stay wide open.
+fn reject_foreign_origin(headers: &HeaderMap) -> Option<Response> {
+    let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok());
+    if origin_allowed(origin) {
+        return None;
+    }
+    tracing::warn!("watcher: refused a config change from origin {origin:?}");
+    Some(
+        (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "origem não permitida" })),
+        )
+            .into_response(),
+    )
+}
+
+fn origin_allowed(origin: Option<&str>) -> bool {
+    let Some(origin) = origin.map(str::trim) else {
+        return true; // not a browser
+    };
+    // Anything that is not a plain http(s) origin — `null` from a sandboxed iframe
+    // or a `file://` page, a custom scheme — is not loopback.
+    let Some(rest) = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    // A real Origin is scheme://host[:port] with no path. Bail on anything else
+    // rather than guess.
+    if rest.is_empty() || rest.contains('/') {
+        return false;
+    }
+    // Split a trailing :port. IPv6 hosts are bracketed and full of colons, so cut
+    // from the right and only when what follows is a port.
+    let host = match rest.rsplit_once(':') {
+        Some((h, port)) if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) => h,
+        _ => rest,
+    };
+    matches!(
+        host.to_ascii_lowercase().as_str(),
+        "localhost" | "127.0.0.1" | "[::1]"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn origin_guard_accepts_local_callers_only() {
+        // No Origin at all: curl, the CLI, an SDK — not a browser, nothing to forge.
+        assert!(origin_allowed(None));
+
+        assert!(origin_allowed(Some("http://localhost:8090")));
+        assert!(origin_allowed(Some("http://127.0.0.1:8090")));
+        assert!(origin_allowed(Some("http://[::1]:8090")));
+        assert!(origin_allowed(Some("http://localhost")));
+        assert!(origin_allowed(Some("https://localhost:8443")));
+        // Any loopback port is fine (frontend dev server → API on another port).
+        assert!(origin_allowed(Some("http://localhost:3000")));
+        assert!(origin_allowed(Some("http://127.0.0.1:5173")));
+
+        // The attack this exists for.
+        assert!(!origin_allowed(Some("https://evil.com")));
+        assert!(!origin_allowed(Some("http://evil.com:8090")));
+        // Prefix/suffix lookalikes must not pass.
+        assert!(!origin_allowed(Some("http://localhost.evil.com")));
+        assert!(!origin_allowed(Some("http://localhost.evil.com:8090")));
+        assert!(!origin_allowed(Some("http://notlocalhost")));
+        assert!(!origin_allowed(Some("http://127.0.0.1.evil.com")));
+        // Sandboxed iframe / file:// page, and junk.
+        assert!(!origin_allowed(Some("null")));
+        assert!(!origin_allowed(Some("")));
+        assert!(!origin_allowed(Some("http://localhost:8090/evil")));
+    }
 }
