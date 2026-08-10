@@ -305,6 +305,8 @@
   #watcher-panel .wp-exts { color: var(--muted2); }
   #watcher-panel .wp-sep { color: var(--border2); }
   #watcher-panel .wp-last { color: var(--muted); }
+  #watcher-panel .wp-spacer { flex: 1; }
+  #watcher-panel .wp-cfg-btn.open { color: var(--rust); border-color: var(--rust); }
   #watcher-hint {
     display: none;
     margin-bottom: 18px; color: var(--muted2); font: 500 12px var(--mono);
@@ -314,6 +316,64 @@
     background: var(--panel2); border: 1px solid var(--border2); border-radius: 3px;
     padding: 2px 6px; color: var(--sand);
   }
+
+  /* ── watcher empty state (invite to configure) ── */
+  #watcher-empty {
+    display: none;
+    background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--border2);
+    border-radius: 4px; padding: 16px 18px; margin-bottom: 8px;
+    align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  #watcher-empty.visible { display: flex; }
+  #watcher-empty .we-ico { font-size: 22px; flex-shrink: 0; }
+  #watcher-empty .we-text { flex: 1; min-width: 160px; }
+  #watcher-empty .we-title { margin: 0; font: 600 13.5px var(--mono); color: var(--fg); }
+  #watcher-empty .we-sub { margin: 3px 0 0; font: 500 12px var(--sans); color: var(--muted); }
+
+  /* ── watcher config block ── */
+  #watcher-config {
+    display: none;
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 4px;
+    padding: 14px 16px; margin-bottom: 18px;
+    flex-direction: column; gap: 14px;
+  }
+  #watcher-config.visible { display: flex; }
+  .wp-cfg-block { display: flex; flex-direction: column; gap: 8px; }
+  .wp-cfg-title {
+    font: 600 11px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em;
+  }
+  .wp-dirlist { display: flex; flex-direction: column; gap: 5px; }
+  .wp-dirrow {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--panel3); border: 1px solid var(--border); border-radius: 3px;
+    padding: 6px 10px; min-width: 0;
+  }
+  .wp-dirrow .wp-dirpath {
+    flex: 1; min-width: 0; font: 500 12.5px var(--mono); color: var(--sand);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .wp-dirrow .wp-dirdel {
+    flex-shrink: 0; background: transparent; border: none; color: var(--muted);
+    cursor: pointer; font: 600 13px var(--mono); padding: 2px 6px; border-radius: 3px;
+    transition: color .14s, background .14s;
+  }
+  .wp-dirrow .wp-dirdel:hover { color: var(--err); background: rgba(229,84,75,.1); }
+  .wp-dirrow .wp-dirdel:disabled { opacity: .4; cursor: not-allowed; }
+  .wp-cfg-empty { color: var(--muted2); font: 500 12px var(--mono); font-style: italic; padding: 2px 0; }
+  .wp-cfg-row { display: flex; gap: 8px; }
+  .wp-cfg-row input {
+    flex: 1; min-width: 0; background: var(--panel3); border: 1px solid var(--border2); border-radius: 3px;
+    color: var(--fg); font: 13px var(--mono); padding: 7px 10px; outline: none; transition: border-color .15s;
+  }
+  .wp-cfg-row input::placeholder { color: var(--muted2); }
+  .wp-cfg-row input:focus { border-color: var(--rust); }
+  .wp-cfg-row input:disabled { opacity: .5; }
+  .wp-cfg-error {
+    display: none;
+    color: var(--err); font: 500 12px var(--mono); background: rgba(229,84,75,.08);
+    border: 1px solid rgba(229,84,75,.3); border-radius: 3px; padding: 7px 10px;
+  }
+  .wp-cfg-error.visible { display: block; }
 
   /* ── section headings ── */
   .section-head { margin: 26px 0 10px; display: flex; align-items: center; gap: 10px; }
@@ -333,6 +393,8 @@
     color: var(--muted); font-size: 13px; line-height: 1.5;
     display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
   }
+  .text-box.hist-fulltext { max-height: 420px; }
+  .segs.hist-segs { margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -369,8 +431,38 @@
     <span class="wp-progress" id="wp-progress"></span>
     <span class="wp-sep" id="wp-last-sep" style="display:none">·</span>
     <span class="wp-last" id="wp-last"></span>
+    <span class="wp-spacer"></span>
+    <button class="btn wp-cfg-btn" id="wp-config-btn" title="configure watched folders">⚙ configure</button>
+  </div>
+
+  <div id="watcher-empty">
+    <span class="we-ico">📁</span>
+    <div class="we-text">
+      <p class="we-title">No folder is being watched</p>
+      <p class="we-sub">Auto-transcribe files dropped into a folder.</p>
+    </div>
+    <button class="btn" id="watcher-empty-btn">monitor a folder</button>
   </div>
   <div id="watcher-hint">folder watcher off — start with: <code>parakeet-local-asr-rust serve --watch ~/Downloads</code></div>
+
+  <div id="watcher-config">
+    <div class="wp-cfg-error" id="wp-cfg-error"></div>
+    <div class="wp-cfg-block">
+      <div class="wp-cfg-title">watched folders</div>
+      <div class="wp-dirlist" id="wp-dirlist"></div>
+      <div class="wp-cfg-row" id="wp-dir-addrow">
+        <input id="wp-dir-input" type="text" placeholder="~/Downloads" autocomplete="off" />
+        <button class="btn" id="wp-dir-add-btn">+ add</button>
+      </div>
+    </div>
+    <div class="wp-cfg-block" id="wp-ext-block">
+      <div class="wp-cfg-title">extensions</div>
+      <div class="wp-cfg-row">
+        <input id="wp-ext-input" type="text" placeholder=".ogg, .m4a" autocomplete="off" />
+        <button class="btn" id="wp-ext-save-btn">save</button>
+      </div>
+    </div>
+  </div>
 
   <div id="drop" class="drop" role="button" tabindex="0" aria-label="Upload audio">
     <div class="ico">🎙</div>
@@ -937,31 +1029,173 @@ async function refreshStats(){
    FOLDER WATCHER PANEL
    ============================================================ */
 let lastFilesProcessed = null;
+let watcherLast = null;              // last known /v1/watcher snapshot, or null if unknown
+let watcherConfigOpen = false;       // manual open/close of the config block (in-memory only)
+let watcherConfigUnsupported = false;// true once a config write endpoint 404s (old server)
+let watcherCfgErrorMsg = "";         // transient inline error from the last config action
+let wpAddBusy = false, wpExtBusy = false;
+const wpDelBusy = new Set();         // dirs currently being removed
 
 function renderWatcher(w){
-  const panel = $("#watcher-panel"), hint = $("#watcher-hint");
-  if(!w || !w.enabled){
+  watcherLast = w;
+  const panel = $("#watcher-panel"), hint = $("#watcher-hint"), empty = $("#watcher-empty");
+  if(!w){
     panel.classList.remove("visible");
-    hint.classList.add("visible");
+    empty.classList.remove("visible");
+    hint.classList.remove("visible");
+    renderWatcherConfig();
     return;
   }
-  hint.classList.remove("visible");
-  panel.classList.add("visible");
-  const dirs = (w.dirs || []).join(", ");
-  const dirsEl = $("#wp-dirs");
-  dirsEl.textContent = truncMiddle(dirs, 44);
-  dirsEl.title = dirs;
-  $("#wp-exts").textContent = (w.exts || []).join(" ");
-  $("#wp-progress").textContent = (w.files_processed||0) + "/" + (w.files_seen||0) + " processed";
-  const lastSep = $("#wp-last-sep"), last = $("#wp-last");
-  if(w.last_file){
-    lastSep.style.display = "";
-    last.textContent = w.last_file.name + " · " + relTime(w.last_file.at_ms);
+  const hasDirs = Array.isArray(w.dirs) && w.dirs.length > 0;
+  const active = !!(w.enabled && hasDirs);
+  panel.classList.toggle("visible", active);
+  empty.classList.toggle("visible", !active);
+  hint.classList.toggle("visible", !active);
+  if(active){
+    const dirs = (w.dirs || []).join(", ");
+    const dirsEl = $("#wp-dirs");
+    dirsEl.textContent = truncMiddle(dirs, 44);
+    dirsEl.title = dirs;
+    $("#wp-exts").textContent = (w.exts || []).join(" ");
+    $("#wp-progress").textContent = (w.files_processed||0) + "/" + (w.files_seen||0) + " processed";
+    const lastSep = $("#wp-last-sep"), last = $("#wp-last");
+    if(w.last_file){
+      lastSep.style.display = "";
+      last.textContent = w.last_file.name + " · " + relTime(w.last_file.at_ms);
+    } else {
+      lastSep.style.display = "none";
+      last.textContent = "";
+    }
+  }
+  renderWatcherConfig();
+}
+
+function renderWatcherConfig(){
+  const cfg = $("#watcher-config");
+  const w = watcherLast;
+  const activeAndConfigured = !!(w && w.enabled && Array.isArray(w.dirs) && w.dirs.length > 0);
+  const shouldShow = !!w && (watcherConfigOpen || !activeAndConfigured);
+  cfg.classList.toggle("visible", shouldShow);
+  const gearBtn = $("#wp-config-btn");
+  if(gearBtn) gearBtn.classList.toggle("open", watcherConfigOpen);
+  if(!w || !shouldShow) return;
+
+  const writeDisabled = watcherConfigUnsupported;
+  const dirs = w.dirs || [];
+  const dirlist = $("#wp-dirlist");
+  dirlist.innerHTML = dirs.length ? dirs.map(d => {
+    const busy = wpDelBusy.has(d);
+    const delBtn = writeDisabled ? "" :
+      '<button class="wp-dirdel" data-wdirdel="'+esc(d)+'" title="stop watching this folder"'+(busy?" disabled":"")+'>'+(busy?"⋯":"✕")+'</button>';
+    return '<div class="wp-dirrow"><span class="wp-dirpath" title="'+esc(d)+'">'+esc(truncMiddle(d,56))+'</span>'+delBtn+'</div>';
+  }).join("") : '<div class="wp-cfg-empty">no folders configured</div>';
+
+  // unsupported server -> hide the write controls entirely (not just disable)
+  $("#wp-dir-addrow").style.display = writeDisabled ? "none" : "";
+  $("#wp-ext-block").style.display = writeDisabled ? "none" : "";
+
+  const dirInput = $("#wp-dir-input"), addBtn = $("#wp-dir-add-btn");
+  dirInput.disabled = wpAddBusy;
+  addBtn.disabled = wpAddBusy;
+  addBtn.textContent = wpAddBusy ? "adding…" : "+ add";
+
+  const extInput = $("#wp-ext-input"), extBtn = $("#wp-ext-save-btn");
+  if(document.activeElement !== extInput) extInput.value = (w.exts||[]).join(", ");
+  extInput.disabled = wpExtBusy;
+  extBtn.disabled = wpExtBusy;
+  extBtn.textContent = wpExtBusy ? "saving…" : "save";
+
+  const errEl = $("#wp-cfg-error");
+  if(watcherConfigUnsupported){
+    errEl.textContent = "servidor não suporta configuração pela UI — atualize para 0.2.2+";
+    errEl.classList.add("visible");
+  } else if(watcherCfgErrorMsg){
+    errEl.textContent = watcherCfgErrorMsg;
+    errEl.classList.add("visible");
   } else {
-    lastSep.style.display = "none";
-    last.textContent = "";
+    errEl.textContent = "";
+    errEl.classList.remove("visible");
   }
 }
+
+async function watcherApiCall(url, method, body){
+  const opts = { method };
+  if(body !== undefined){ opts.headers = {"Content-Type":"application/json"}; opts.body = JSON.stringify(body); }
+  const r = await fetch(url, opts);
+  if(r.status === 404){
+    watcherConfigUnsupported = true;
+    throw new Error("servidor não suporta configuração pela UI — atualize para 0.2.2+");
+  }
+  let j = null;
+  try { j = await r.json(); } catch {}
+  if(!r.ok){
+    throw new Error((j && j.error) || ("HTTP "+r.status));
+  }
+  return j;
+}
+
+async function addWatchDir(){
+  const input = $("#wp-dir-input");
+  const path = input.value.trim();
+  if(!path) return;
+  watcherConfigOpen = true;
+  wpAddBusy = true; watcherCfgErrorMsg = ""; renderWatcherConfig();
+  try {
+    watcherLast = await watcherApiCall("/v1/watcher/dirs", "POST", { path });
+    input.value = "";
+    toast("Folder added: "+path, "ok");
+  } catch(e){
+    watcherCfgErrorMsg = e.message;
+    toast("Failed to add folder: "+e.message, "err");
+  } finally {
+    wpAddBusy = false;
+    renderWatcher(watcherLast);
+  }
+}
+
+async function removeWatchDir(path){
+  watcherConfigOpen = true;
+  wpDelBusy.add(path); watcherCfgErrorMsg = ""; renderWatcherConfig();
+  try {
+    watcherLast = await watcherApiCall("/v1/watcher/dirs", "DELETE", { path });
+    toast("Folder removed: "+path, "ok");
+  } catch(e){
+    watcherCfgErrorMsg = e.message;
+    toast("Failed to remove folder: "+e.message, "err");
+  } finally {
+    wpDelBusy.delete(path);
+    renderWatcher(watcherLast);
+  }
+}
+
+async function saveWatchExts(){
+  const input = $("#wp-ext-input");
+  const exts = input.value.split(/[,\s]+/).map(s=>s.trim()).filter(Boolean);
+  watcherConfigOpen = true;
+  wpExtBusy = true; watcherCfgErrorMsg = ""; renderWatcherConfig();
+  try {
+    watcherLast = await watcherApiCall("/v1/watcher/exts", "PUT", { exts });
+    toast("Extensions saved.", "ok");
+  } catch(e){
+    watcherCfgErrorMsg = e.message;
+    toast("Failed to save extensions: "+e.message, "err");
+  } finally {
+    wpExtBusy = false;
+    renderWatcher(watcherLast);
+  }
+}
+
+$("#wp-config-btn").addEventListener("click", () => { watcherConfigOpen = !watcherConfigOpen; renderWatcherConfig(); });
+$("#watcher-empty-btn").addEventListener("click", () => { watcherConfigOpen = true; renderWatcherConfig(); $("#wp-dir-input").focus(); });
+$("#wp-dir-add-btn").addEventListener("click", addWatchDir);
+$("#wp-dir-input").addEventListener("keydown", e => { if(e.key==="Enter"){ e.preventDefault(); addWatchDir(); } });
+$("#wp-ext-save-btn").addEventListener("click", saveWatchExts);
+$("#wp-ext-input").addEventListener("keydown", e => { if(e.key==="Enter"){ e.preventDefault(); saveWatchExts(); } });
+$("#wp-dirlist").addEventListener("click", e => {
+  const t = e.target.closest("[data-wdirdel]");
+  if(!t || t.disabled) return;
+  removeWatchDir(t.dataset.wdirdel);
+});
 
 async function refreshWatcher(){
   try {
@@ -974,8 +1208,7 @@ async function refreshWatcher(){
     lastFilesProcessed = w.files_processed;
   } catch {
     // old server without watcher support (or transient failure) -> hide panel entirely
-    $("#watcher-panel").classList.remove("visible");
-    $("#watcher-hint").classList.remove("visible");
+    renderWatcher(null);
   }
 }
 
@@ -983,6 +1216,10 @@ async function refreshWatcher(){
    SERVER HISTORY (~/.ras) — separate from the browser's IndexedDB list
    ============================================================ */
 let historyItems = [];
+const histExpanded = new Set();       // ids currently expanded inline
+const histDetailCache = new Map();    // id -> full detail (GET /v1/history/{id})
+const histLoadingIds = new Set();     // ids currently being fetched
+const histLoadErrors = new Map();     // id -> error message from a failed detail fetch
 
 function histBadgeSource(source){
   if(source === "watcher") return '<span class="badge auto">auto</span>';
@@ -993,34 +1230,109 @@ function histBadgeStatus(status){
   if(status === "failed") return '<span class="badge error">✕ failed</span>';
   return '<span class="badge pending">'+esc(status || "?")+'</span>';
 }
+function histDetailHTML(id){
+  if(histLoadErrors.has(id)){
+    return '<div class="err-tr">⚠ Failed to load transcript: '+esc(histLoadErrors.get(id))+'</div>';
+  }
+  const detail = histDetailCache.get(id);
+  if(!detail){
+    return '<div class="proc-tr"><span class="live"><span class="pulse"></span>loading</span> transcript…</div>';
+  }
+  const text = (detail.text || "").trim();
+  const segs = Array.isArray(detail.segments) ? detail.segments : [];
+  let html = text
+    ? '<div class="text-box hist-fulltext">'+esc(text)+'</div>'
+    : '<div class="empty-tr">(empty transcript)</div>';
+  if(segs.length){
+    html += '<div class="segs hist-segs">' + segs.map(s =>
+      '<div class="seg" data-hrid="'+esc(id)+'" data-hseek="'+s.start+'">' +
+      '<span class="tc">'+fmtTimecode(s.start)+'</span>' +
+      '<span class="tx">'+esc(s.text||"")+'</span></div>'
+    ).join("") + '</div>';
+  }
+  return html;
+}
+function histBodyHTML(item){
+  const text = (item.text || "").trim();
+  if(item.status === "failed"){
+    return '<div class="err-tr">⚠ '+esc(item.error || "Transcription failed")+'</div>';
+  }
+  if(!text){
+    return '<div class="empty-tr">(empty transcript)</div>';
+  }
+  const expanded = histExpanded.has(item.id);
+  let body = '<button class="segtoggle '+(expanded?"open":"")+'" data-hexpand="'+esc(item.id)+'"><span class="chev">▶</span> '+(expanded?"hide full transcript":"view full transcript")+'</button>';
+  body += expanded ? histDetailHTML(item.id) : '<div class="hist-preview">'+esc(text)+'</div>';
+  return body;
+}
 function histCardHTML(item){
   const dur = item.duration!=null ? fmtDurSec(item.duration) : null;
-  const text = (item.text || "").trim();
   const hasAudio = !!item.audio_file;
-  let body;
-  if(item.status === "failed"){
-    body = '<div class="err-tr">⚠ '+esc(item.error || "Transcription failed")+'</div>';
-  } else if(text){
-    body = '<div class="hist-preview">'+esc(text)+'</div>';
-  } else {
-    body = '<div class="empty-tr">(empty transcript)</div>';
-  }
   let acts = '<button class="btn" data-hplay="'+esc(item.id)+'"'+(hasAudio?"":" disabled")+'>▶ play</button>';
   acts += '<button class="btn" data-hcopy="'+esc(item.id)+'">⧉ copy</button>';
   acts += '<button class="btn" data-hdl="'+esc(item.id)+'" data-fmt="txt">↓ txt</button>';
   acts += '<button class="btn" data-hdl="'+esc(item.id)+'" data-fmt="srt">↓ srt</button>';
   acts += '<button class="btn" data-hdl="'+esc(item.id)+'" data-fmt="vtt">↓ vtt</button>';
   acts += '<button class="btn danger" data-hdel="'+esc(item.id)+'">🗑 delete</button>';
-  return '<div class="card st-'+(item.status==="failed"?"error":"done")+' compact">' +
+  return '<div class="card st-'+(item.status==="failed"?"error":"done")+' compact" data-histcard="'+esc(item.id)+'">' +
     '<div class="chead"><span class="fname" title="'+esc(item.name)+'">'+esc(item.name)+'</span>'+histBadgeStatus(item.status)+histBadgeSource(item.source)+'</div>' +
     '<div class="cmeta">' +
       (dur?'<span>⏱ '+dur+'</span>':'') +
       '<span>'+fmtDate(item.created_at_ms)+'</span>' +
     '</div>' +
     '<div class="caudio" id="hist-audio-'+esc(item.id)+'"></div>' +
-    '<div class="cbody">'+body+'</div>' +
+    '<div class="cbody">'+histBodyHTML(item)+'</div>' +
     '<div class="actions">'+acts+'</div>' +
   '</div>';
+}
+function updateHistCardBody(id){
+  const item = historyItems.find(i => i.id === id);
+  if(!item) return;
+  const cardEl = document.querySelector('[data-histcard="'+CSS.escape(id)+'"]');
+  if(!cardEl){ renderHistory(); return; }
+  const cbody = cardEl.querySelector(".cbody");
+  if(cbody) cbody.innerHTML = histBodyHTML(item);
+}
+function toggleHistExpand(id){
+  if(histExpanded.has(id)){
+    histExpanded.delete(id);
+  } else {
+    histExpanded.add(id);
+    loadHistDetail(id);
+  }
+  updateHistCardBody(id);
+}
+async function loadHistDetail(id){
+  if(histDetailCache.has(id) || histLoadingIds.has(id)) return;
+  histLoadingIds.add(id);
+  try {
+    const r = await fetch("/v1/history/"+encodeURIComponent(id));
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const j = await r.json();
+    histDetailCache.set(id, j);
+    histLoadErrors.delete(id);
+  } catch(e){
+    histLoadErrors.set(id, e.message || String(e));
+  } finally {
+    histLoadingIds.delete(id);
+    if(histExpanded.has(id)) updateHistCardBody(id);
+  }
+}
+function seekHistRec(id, t){
+  const item = historyItems.find(i => i.id === id);
+  if(!item || !item.audio_file) return;
+  const container = document.getElementById("hist-audio-"+CSS.escape(id));
+  if(!container) return;
+  let audio = container.querySelector("audio");
+  if(!audio){
+    histPlay(id);
+    audio = container.querySelector("audio");
+    if(!audio) return;
+    audio.addEventListener("loadedmetadata", () => { audio.currentTime = t; audio.play().catch(()=>{}); }, { once: true });
+    return;
+  }
+  audio.currentTime = t;
+  audio.play().catch(()=>{});
 }
 function renderHistory(){
   $("#hist-shcount").textContent = historyItems.length ? historyItems.length+" recording"+(historyItems.length!==1?"s":"") : "";
@@ -1055,8 +1367,9 @@ function histPlay(id){
   audio.play().catch(()=>{});
 }
 async function histCopy(id){
+  const cached = histDetailCache.get(id);
   const item = historyItems.find(i => i.id === id);
-  const t = ((item && item.text) || "").trim();
+  const t = ((cached && cached.text) || (item && item.text) || "").trim();
   if(!t){ toast("No text to copy.", "err"); return; }
   try { await navigator.clipboard.writeText(t); toast("Transcript copied!", "ok"); }
   catch { toast("Copy failed (no permission?)", "err"); }
@@ -1073,6 +1386,7 @@ async function histDelete(id){
     const r = await fetch("/v1/history/"+encodeURIComponent(id), { method: "DELETE" });
     if(!r.ok) throw new Error("HTTP "+r.status);
     historyItems = historyItems.filter(i => i.id !== id);
+    histExpanded.delete(id); histDetailCache.delete(id); histLoadErrors.delete(id); histLoadingIds.delete(id);
     renderHistory();
     toast("Recording deleted.", "ok");
   } catch(e){
@@ -1081,12 +1395,14 @@ async function histDelete(id){
 }
 
 $("#hist-list").addEventListener("click", e => {
-  const t = e.target.closest("[data-hplay],[data-hcopy],[data-hdl],[data-hdel]");
+  const t = e.target.closest("[data-hplay],[data-hcopy],[data-hdl],[data-hdel],[data-hexpand],[data-hseek]");
   if(!t) return;
   if(t.dataset.hplay!=null) return histPlay(t.dataset.hplay);
   if(t.dataset.hcopy!=null) return histCopy(t.dataset.hcopy);
   if(t.dataset.hdl!=null) return histDownload(t.dataset.hdl, t.dataset.fmt);
   if(t.dataset.hdel!=null) return histDelete(t.dataset.hdel);
+  if(t.dataset.hexpand!=null) return toggleHistExpand(t.dataset.hexpand);
+  if(t.dataset.hseek!=null){ const rid=t.getAttribute("data-hrid"); return seekHistRec(rid, parseFloat(t.dataset.hseek)); }
 });
 $("#hist-refresh-btn").addEventListener("click", () => refreshHistory());
 
