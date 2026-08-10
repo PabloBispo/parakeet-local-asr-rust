@@ -104,6 +104,43 @@ parakeet-local-asr-rust serve --watch ~/Downloads --watch-ext .ogg
 - Already-transcribed files are remembered in `~/.ras/watcher_state.json`, so a
   restart does not re-transcribe the whole folder.
 
+#### Configurable at runtime — from the UI or the API
+
+No flags and no restart needed: **folders and extensions can be changed while the
+server runs**, from the watcher panel in the UI or over HTTP. Changes are saved to
+`~/.ras/watcher_config.json` and restored on the next start.
+
+```bash
+# start watching a folder (~ is expanded server-side)
+curl -s -X POST http://localhost:8090/v1/watcher/dirs \
+  -H 'Content-Type: application/json' -d '{"path":"~/Downloads"}'
+
+# replace the extension list (the whole list, not a delta; a missing dot is added)
+curl -s -X PUT http://localhost:8090/v1/watcher/exts \
+  -H 'Content-Type: application/json' -d '{"exts":[".ogg","m4a"]}'
+
+# stop watching a folder
+curl -s -X DELETE http://localhost:8090/v1/watcher/dirs \
+  -H 'Content-Type: application/json' -d '{"path":"/Users/me/Downloads"}'
+```
+
+All three answer with the same body as `GET /v1/watcher` (so a client just
+re-renders), or `400 {"error":"pasta não encontrada"}` on bad input. `enabled` in
+that body means "at least one folder is being watched" — it flips as folders are
+added and removed.
+
+Changes take effect immediately, including while a long file is being transcribed:
+the watcher runs a control task (owns the folder subscriptions) separately from its
+transcription task, so a config call never queues behind a 30-minute recording.
+
+> **Origin guard.** The server listens on `0.0.0.0` with permissive CORS so local
+> tools and the browser extension can post audio from anywhere. These three
+> endpoints are the exception: they choose which folders on your machine get read,
+> so a request carrying a non-loopback `Origin` header is refused with
+> `403 {"error":"origem não permitida"}`. Requests with no `Origin` (curl, scripts,
+> SDKs) and browser requests from `localhost` / `127.0.0.1` / `[::1]` on **any**
+> port are allowed. The `GET` endpoints and `/v1/audio/*` are unaffected.
+
 ### Run without Docker
 
 Needs `ffmpeg` on PATH and a Rust toolchain (≥ 1.83):
@@ -193,7 +230,10 @@ transcribe→summarize), JS/TS, SSE streaming, and async job polling.
 | `GET`  | `/v1/history/{id}/audio` | the archived original audio |
 | `GET`  | `/v1/history/{id}/download?format=` | `txt` (default) \| `srt` \| `vtt` \| `json` as an attachment |
 | `DELETE` | `/v1/history/{id}` | delete record + text + audio → `{"deleted": true}` |
-| `GET`  | `/v1/watcher` | folder-watcher status + counters |
+| `GET`  | `/v1/watcher` | folder-watcher status, config + counters |
+| `POST` | `/v1/watcher/dirs` | `{"path":"~/Downloads"}` → start watching it; answers with the `/v1/watcher` body |
+| `DELETE` | `/v1/watcher/dirs` | `{"path":"/Users/me/Downloads"}` → stop watching it (path in the body) |
+| `PUT`  | `/v1/watcher/exts` | `{"exts":[".ogg","m4a"]}` → replace the watched extensions |
 | `GET`  | `/health` | `{status, model, device, history_count, watcher_enabled}` |
 | `GET`  | `/metrics` | `{queue_depth, total_requests, avg_latency_ms}` |
 
@@ -208,9 +248,9 @@ timestamps in seconds, absolute).
 | `ASR_MODEL` | `parakeet-tdt-0.6b-v3` | `parakeet-tdt-0.6b-v3` (25 EU langs) or `parakeet-tdt-0.6b-v2` (English) |
 | `MODELS_DIR` | `$RAS_HOME/models` (`/models` in Docker) | model cache dir |
 | `ASR_DEVICE` | `cpu` | reported in `/health` (info only) |
-| `RAS_HOME` | `~/.ras` | data home: transcripts, archived audio, model cache, watcher state |
-| `ASR_WATCH_DIRS` | — | comma-separated folders to watch (same as `--watch`) |
-| `ASR_WATCH_EXTS` | `.ogg` | comma-separated extensions the watcher picks up |
+| `RAS_HOME` | `~/.ras` | data home: transcripts, archived audio, model cache, watcher config + state |
+| `ASR_WATCH_DIRS` | — | comma-separated folders to watch (same as `--watch`; merged into the saved config) |
+| `ASR_WATCH_EXTS` | `.ogg` | comma-separated extensions the watcher picks up (overrides the saved list) |
 | `ASR_NO_NOTIFY` | — | `1` disables desktop notifications |
 | `ASR_NO_HISTORY` | — | `1` disables persistence — nothing is written to `~/.ras` |
 | `ASR_NO_OPEN` | — | `1` does not open the browser on startup |
@@ -229,7 +269,10 @@ timestamps in seconds, absolute).
   are stitched back to absolute time.
 - Model is **auto-downloaded + SHA-256 verified** on first run (Handy CDN artifacts).
 - **Folder watcher** (FSEvents / inotify) feeds its own sequential worker, so watched
-  files never compete for the async job queue that API clients poll.
+  files never compete for the async job queue that API clients poll. It is split in
+  two tasks — a control task owning the folder subscriptions and a transcription task
+  draining events — so runtime config changes answer in milliseconds even while a
+  long recording is being transcribed.
 
 ### Data home — `~/.ras`
 
@@ -243,6 +286,7 @@ Everything the server keeps between runs lives in one directory (override with
 │   ├── <uuid>.json             full record: metadata + text + segments
 │   └── <uuid>.txt              plain text (what a notification copies)
 ├── audio/<uuid>-<name>         the original audio, byte-for-byte
+├── watcher_config.json         watched folders + extensions, as set from the UI/API
 └── watcher_state.json          per-file (size, mtime) so nothing is transcribed twice
 ```
 

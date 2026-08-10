@@ -24,7 +24,10 @@ non-empty string; the server ignores it).
 | `GET`  | `/v1/history/{id}/audio` | The archived original audio bytes |
 | `GET`  | `/v1/history/{id}/download?format=txt\|srt\|vtt\|json` | Transcript as a file attachment |
 | `DELETE` | `/v1/history/{id}` | Delete record + text + audio → `{"deleted": true}` |
-| `GET`  | `/v1/watcher` | Folder-watcher status and counters |
+| `GET`  | `/v1/watcher` | Folder-watcher status, configuration and counters |
+| `POST` | `/v1/watcher/dirs` | `{"path":"~/Downloads"}` → watch that folder; returns the `/v1/watcher` body |
+| `DELETE` | `/v1/watcher/dirs` | `{"path":"/Users/me/Downloads"}` → stop watching it (path in the body) |
+| `PUT`  | `/v1/watcher/exts` | `{"exts":[".ogg","m4a"]}` → replace the watched extensions |
 | `GET`  | `/health` | `{"status": "ok", "model": ..., "device": ..., "history_count": N, "watcher_enabled": bool}` |
 | `GET`  | `/metrics` | `{"queue_depth": N, "total_requests": N, "avg_latency_ms": N}` |
 
@@ -88,11 +91,17 @@ parakeet-local-asr-rust serve --watch ~/Downloads --watch-ext .ogg
 | — | `RAS_HOME` | data home, default `~/.ras` |
 | — | `ASR_NO_HISTORY=1` | do not persist anything |
 
+The flags are optional: folders and extensions are **configurable at runtime** (see
+below) and remembered in `$RAS_HOME/watcher_config.json`. On startup the flags/env
+are merged into that file — folders are a union (persisted first), while an explicit
+`--watch-ext` / `ASR_WATCH_EXTS` replaces the saved extension list.
+
 ```text
 $RAS_HOME/
 ├── models/                model cache (unless MODELS_DIR is set)
 ├── transcripts/<uuid>.json + <uuid>.txt
 ├── audio/<uuid>-<name>    the original audio, verbatim
+├── watcher_config.json    watched folders + extensions ({"dirs":[...],"exts":[...]})
 └── watcher_state.json     dedup state (size + mtime per path)
 ```
 
@@ -126,6 +135,41 @@ curl -s http://localhost:8090/v1/watcher | jq
 #  "files_seen":3,"files_processed":3,
 #  "last_file":{"name":"voice.ogg","history_id":"<uuid>","at_ms":...}}
 ```
+
+### Changing what is watched, at runtime
+
+No restart needed — the UI's watcher panel drives these three endpoints, and so can
+you. Each returns the **same body as `GET /v1/watcher`** on success, so a client just
+re-renders from the response; bad input is `400 {"error":"<mensagem>"}`.
+
+```bash
+# add a folder (~ expanded server-side, path canonicalized, adding twice is a no-op)
+curl -s -X POST http://localhost:8090/v1/watcher/dirs \
+  -H 'Content-Type: application/json' -d '{"path":"~/Downloads"}'
+
+# replace the extension list (whole list; case and a missing dot are normalized)
+curl -s -X PUT http://localhost:8090/v1/watcher/exts \
+  -H 'Content-Type: application/json' -d '{"exts":[".ogg","m4a"]}'
+# -> {"enabled":true,"dirs":[...],"exts":[".ogg",".m4a"],...}
+
+# remove a folder — send back the exact string from dirs[], or any spelling of it
+curl -s -X DELETE http://localhost:8090/v1/watcher/dirs \
+  -H 'Content-Type: application/json' -d '{"path":"/Users/me/Downloads"}'
+```
+
+Errors: `pasta não encontrada`, `caminho não é uma pasta`, `pasta não monitorada`,
+`informe ao menos uma extensão`, `extensão inválida: <x>`. `enabled` means "at least
+one folder is being watched", so it flips as folders are added and removed. Commands
+are handled by a control task that is independent of transcription — they answer in
+milliseconds even mid-transcription of a 30-minute file.
+
+**Origin guard.** The server listens on `0.0.0.0` with permissive CORS so any local
+tool can post audio. These three endpoints are the exception, because they decide
+which folders on the host get read and copied into `$RAS_HOME`: a request whose
+`Origin` header is not a loopback host is refused with
+`403 {"error":"origem não permitida"}`. No `Origin` at all (curl, SDKs, scripts) is
+fine, and browsers on `localhost` / `127.0.0.1` / `[::1]` are fine on **any** port
+(so a frontend dev server works). `GET /v1/watcher` and `/v1/audio/*` are unaffected.
 
 A `HistoryRecord` is:
 
